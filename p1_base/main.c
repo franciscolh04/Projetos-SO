@@ -49,8 +49,13 @@ int main(int argc, char *argv[]) {
     // int fdWrite = 0;
     
     // Encontra os ficheiros com extensão ".jobs"
-    printf("%s\n", dp->d_name);
     if (strstr(dp->d_name, ".jobs") != NULL) {
+      // Constrói o caminho completo do arquivo
+      char filepath[strlen(dirpath) + strlen("/") + strlen(dp->d_name) + 1];
+      strcpy(filepath, dirpath);
+      strcat(filepath, "/");
+      strcat(filepath, dp->d_name);
+
       // Manipulação de strings para criação do nome do ficheiro de output
       size_t size = strlen(dp->d_name) - 5;
       char filename[size + 4 + 1];  // +4 para ".out", +1 para o caractere nulo
@@ -59,7 +64,7 @@ int main(int argc, char *argv[]) {
       strcat(filename, ".out");
 
       // Abre o ficheiro e cria ficheiro com extensão ".out"
-      fdRead = open(dp->d_name, O_RDONLY);
+      fdRead = open(filepath, O_RDONLY);
       // fdWrite = open(filename, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
 
       int flag = 1;
@@ -69,6 +74,7 @@ int main(int argc, char *argv[]) {
         size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
 
         switch (get_next(fdRead)) {
+
           case CMD_CREATE:
             printf("create\n");
             if (parse_create(fdRead, &event_id, &num_rows, &num_columns) != 0) {
@@ -83,6 +89,7 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_RESERVE:
+            printf("reserve\n");
             num_coords = parse_reserve(fdRead, MAX_RESERVATION_SIZE, &event_id, xs, ys);
 
             if (num_coords == 0) {
@@ -97,6 +104,7 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_SHOW:
+            printf("show\n");
             if (parse_show(fdRead, &event_id) != 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
@@ -109,6 +117,7 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_LIST_EVENTS:
+            printf("list\n");
             if (ems_list_events()) {
               fprintf(stderr, "Failed to list events\n");
             }
@@ -150,7 +159,8 @@ int main(int argc, char *argv[]) {
             break;
 
           case EOC:
-            ems_terminate();
+            printf("entrou terminate \n");
+            //ems_terminate();
             flag = 0;
         }
       }
