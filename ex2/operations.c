@@ -1,12 +1,18 @@
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <dirent.h>
 
 #include "eventlist.h"
 #include "operations.h"
+#include "parser.h"
+#include "constants.h"
 
 #define MAX_SIZE 100000
 
@@ -242,15 +248,6 @@ int ems_list_events(int fd) {
   // Escreve a informação num buffer
   if (event_list->head == NULL) {
     offset = writeStringToBuffer(buffer, offset, "No events\n");
-    /*
-    bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "No events\n"));
-
-    if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
-      fprintf(stderr, "Failed to write in buffer\n");
-      return 1;
-    }
-    offset += bytes_written;
-    */
   }
 
   struct ListNode* current = event_list->head;
@@ -327,4 +324,131 @@ int writeStringToBuffer(char* buffer, int offset, const char* inputString) {
     }
 
     return offset + bytes_written; // Retorna o novo offset
+}
+
+void ems_execute_child(struct dirent *dp, char *dirpath) {
+  int fdRead = 0;
+  int fdWrite = 0;
+
+  // Constrói o caminho completo dos ficheiros de entrada e saída
+  char filepathInput[strlen(dirpath) + strlen("/") + strlen(dp->d_name) + 1];
+  char filepathOutput[strlen(dirpath) + strlen("/") + strlen(dp->d_name)];
+
+  // Ficheiro de Input
+  strcpy(filepathInput, dirpath);
+  strcat(filepathInput, "/");
+  strcat(filepathInput, dp->d_name);
+
+  // Manipulação de strings para criação do nome do ficheiro de output
+  size_t size = strlen(dp->d_name) - 5;
+  char filename[size + 4 + 1];  // +4 para ".out", +1 para o caractere nulo
+  strncpy(filename, dp->d_name, size);
+  filename[size] = '\0';  // Adiciona o caractere nulo manualmente
+  strcat(filename, ".out");
+
+  // Ficheiro de Output
+  strcpy(filepathOutput, dirpath);
+  strcat(filepathOutput, "/");
+  strcat(filepathOutput, filename);
+
+  // Abre o ficheiro e cria ficheiro com extensão ".out"
+  fdRead = open(filepathInput, O_RDONLY);
+  fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+
+  int flag = 1;
+  while (flag == 1) {
+    unsigned int event_id, delay;
+    size_t num_rows, num_columns, num_coords;
+    size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
+
+    switch (get_next(fdRead)) {
+
+      case CMD_CREATE:
+        if (parse_create(fdRead, &event_id, &num_rows, &num_columns) != 0) {
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+
+        if (ems_create(event_id, num_rows, num_columns)) {
+          fprintf(stderr, "Failed to create event\n");
+        }
+
+        break;
+
+      case CMD_RESERVE:
+        num_coords = parse_reserve(fdRead, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+
+        if (num_coords == 0) {
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+
+        if (ems_reserve(event_id, num_coords, xs, ys)) {
+          fprintf(stderr, "Failed to reserve seats\n");
+        }
+
+        break;
+
+      case CMD_SHOW:
+        if (parse_show(fdRead, &event_id) != 0) {
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+
+        if (ems_show(fdWrite, event_id)) {
+          fprintf(stderr, "Failed to show event\n");
+        }
+
+        break;
+
+      case CMD_LIST_EVENTS:
+        if (ems_list_events(fdWrite)) {
+          fprintf(stderr, "Failed to list events\n");
+        }
+
+        break;
+
+      case CMD_WAIT:
+        if (parse_wait(fdRead, &delay, NULL) == -1) {  // thread_id is not implemented
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
+          continue;
+        }
+
+        if (delay > 0) {
+          printf("Waiting...\n");
+          ems_wait(delay);
+        }
+
+        break;
+
+      case CMD_INVALID:
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
+        break;
+
+      case CMD_HELP:
+        printf(
+            "Available commands:\n"
+            "  CREATE <event_id> <num_rows> <num_columns>\n"
+            "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
+            "  SHOW <event_id>\n"
+            "  LIST\n"
+            "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
+            "  BARRIER\n"                      // Not implemented
+            "  HELP\n");
+
+        break;
+
+      case CMD_BARRIER:  // Not implemented
+      case CMD_EMPTY:
+        break;
+
+      case EOC:
+        ems_free_all_events();
+        ems_reset_event_list();
+        close(fdRead);
+        close(fdWrite);
+        //ems_terminate();
+        flag = 0;
+    }
+  }
 }

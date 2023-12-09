@@ -46,4 +46,6 @@ void ems_free_all_events();
 void ems_reset_event_list();
 int writeStringToBuffer(char* buffer, int offset, const char* inputString);
 
+void ems_execute_child(struct dirent *dp, char *dirpath);
+
 #endif  // EMS_OPERATIONS_H

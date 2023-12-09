@@ -6,10 +6,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "eventlist.h"
 
+#include "eventlist.h"
 #include "constants.h"
-#include "operations.h"
+#include "operations.h"              
 #include "parser.h"
 
 #define TRUE 1
@@ -18,9 +18,9 @@
 int main(int argc, char *argv[]) {
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
 
-  if (argc > 2) {
+  if (argc > 3) {
     char *endptr;
-    unsigned long int delay = strtoul(argv[2], &endptr, 10);
+    unsigned long int delay = strtoul(argv[3], &endptr, 10);
 
     if (*endptr != '\0' || delay > UINT_MAX) {
       fprintf(stderr, "Invalid delay value or value too large\n");
@@ -36,6 +36,7 @@ int main(int argc, char *argv[]) {
   }
 
   char *dirpath = argv[1];
+  int MAX_PROC = atoi(argv[2]);
 
   DIR *dir = opendir(dirpath);
   if (dir == NULL) {
@@ -46,133 +47,51 @@ int main(int argc, char *argv[]) {
   struct dirent *dp;
 
   while ((dp = readdir(dir)) != NULL) {
-    int fdRead = 0;
-    int fdWrite = 0;
     
     // Encontra os ficheiros com extensão ".jobs"
     if (strstr(dp->d_name, ".jobs") != NULL) {
-      // Constrói o caminho completo dos ficheiros de entrada e saída
-      char filepathInput[strlen(dirpath) + strlen("/") + strlen(dp->d_name) + 1];
-      char filepathOutput[strlen(dirpath) + strlen("/") + strlen(dp->d_name)];
+      static int activeProcesses = 0;
+      pid_t pid = fork();
+       
+      if(pid == -1) {
+        fprintf(stderr, "Failed to creat a child process\n");
+        exit(EXIT_FAILURE);
+      }
 
-      // Ficheiro de Input
-      strcpy(filepathInput, dirpath);
-      strcat(filepathInput, "/");
-      strcat(filepathInput, dp->d_name);
+      else if (pid == 0) {
+        ems_execute_child(dp, dirpath);
+        exit(EXIT_SUCCESS);
+      }
 
-      // Manipulação de strings para criação do nome do ficheiro de output
-      size_t size = strlen(dp->d_name) - 5;
-      char filename[size + 4 + 1];  // +4 para ".out", +1 para o caractere nulo
-      strncpy(filename, dp->d_name, size);
-      filename[size] = '\0';  // Adiciona o caractere nulo manualmente
-      strcat(filename, ".out");
+      if (pid > 0) {
+        activeProcesses++;
+        //Espera a conclusão do processo filho se atingir o número máximo de processos ativos
+        if(activeProcesses >= MAX_PROC) {
+          int status;
+          pid_t terminated_pid = wait(&status);
 
-      // Ficheiro de Output
-      strcpy(filepathOutput, dirpath);
-      strcat(filepathOutput, "/");
-      strcat(filepathOutput, filename);
+          if (WIFEXITED(status)) {
+              printf("Child process %d terminated with status %d\n", terminated_pid, WEXITSTATUS(status));
+          } else if (WIFSIGNALED(status)) {
+              printf("Child process %d terminated by signal %d\n", terminated_pid, WTERMSIG(status));
+          }
 
-      // Abre o ficheiro e cria ficheiro com extensão ".out"
-      fdRead = open(filepathInput, O_RDONLY);
-      fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
-
-      int flag = 1;
-      while (flag == 1) {
-        unsigned int event_id, delay;
-        size_t num_rows, num_columns, num_coords;
-        size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
-
-        switch (get_next(fdRead)) {
-
-          case CMD_CREATE:
-            if (parse_create(fdRead, &event_id, &num_rows, &num_columns) != 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (ems_create(event_id, num_rows, num_columns)) {
-              fprintf(stderr, "Failed to create event\n");
-            }
-
-            break;
-
-          case CMD_RESERVE:
-            num_coords = parse_reserve(fdRead, MAX_RESERVATION_SIZE, &event_id, xs, ys);
-
-            if (num_coords == 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (ems_reserve(event_id, num_coords, xs, ys)) {
-              fprintf(stderr, "Failed to reserve seats\n");
-            }
-
-            break;
-
-          case CMD_SHOW:
-            if (parse_show(fdRead, &event_id) != 0) {
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (ems_show(fdWrite, event_id)) {
-              fprintf(stderr, "Failed to show event\n");
-            }
-
-            break;
-
-          case CMD_LIST_EVENTS:
-            if (ems_list_events(fdWrite)) {
-              fprintf(stderr, "Failed to list events\n");
-            }
-
-            break;
-
-          case CMD_WAIT:
-            if (parse_wait(fdRead, &delay, NULL) == -1) {  // thread_id is not implemented
-              fprintf(stderr, "Invalid command. See HELP for usage\n");
-              continue;
-            }
-
-            if (delay > 0) {
-              printf("Waiting...\n");
-              ems_wait(delay);
-            }
-
-            break;
-
-          case CMD_INVALID:
-            fprintf(stderr, "Invalid command. See HELP for usage\n");
-            break;
-
-          case CMD_HELP:
-            printf(
-                "Available commands:\n"
-                "  CREATE <event_id> <num_rows> <num_columns>\n"
-                "  RESERVE <event_id> [(<x1>,<y1>) (<x2>,<y2>) ...]\n"
-                "  SHOW <event_id>\n"
-                "  LIST\n"
-                "  WAIT <delay_ms> [thread_id]\n"  // thread_id is not implemented
-                "  BARRIER\n"                      // Not implemented
-                "  HELP\n");
-
-            break;
-
-          case CMD_BARRIER:  // Not implemented
-          case CMD_EMPTY:
-            break;
-
-          case EOC:
-            ems_free_all_events();
-            ems_reset_event_list();
-            //close(fdRead);
-            //close(fdWrite);
-            //ems_terminate();
-            flag = 0;
+          activeProcesses--;
         }
       }
     }
+
+    // Espera a conclusão dos processos filhos restantes
+    int status;
+    pid_t terminated_pid;
+    while ((terminated_pid = wait(&status)) > 0) {
+        if (WIFEXITED(status)) {
+            printf("Child process %d terminated with status %d\n", terminated_pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("Child process %d terminated by signal %d\n", terminated_pid, WTERMSIG(status));
+        }
+    }
   }
-  // Escrever
+  closedir(dir);
+  return 0;
 }
