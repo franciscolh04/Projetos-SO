@@ -18,6 +18,8 @@ int ems_terminate();
 /// @return 0 if the event was created successfully, 1 otherwise.
 int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols);
 
+int ems_free_event(unsigned int event_id);
+
 /// Creates a new reservation for the given event.
 /// @param event_id Id of the event to create a reservation for.
 /// @param num_seats Number of seats to reserve.
@@ -27,16 +29,21 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols);
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t *xs, size_t *ys);
 
 /// Prints the given event.
+/// @param fd File descriptor to write.
 /// @param event_id Id of the event to print.
 /// @return 0 if the event was printed successfully, 1 otherwise.
-int ems_show(unsigned int event_id);
+int ems_show(int fd, unsigned int event_id);
 
 /// Prints all the events.
 /// @return 0 if the events were printed successfully, 1 otherwise.
-int ems_list_events();
+int ems_list_events(int fd);
 
 /// Waits for a given amount of time.
 /// @param delay_us Delay in milliseconds.
 void ems_wait(unsigned int delay_ms);
+
+void ems_free_all_events();
+void ems_reset_event_list();
+int writeStringToBuffer(char* buffer, int offset, const char* inputString);
 
 #endif  // EMS_OPERATIONS_H

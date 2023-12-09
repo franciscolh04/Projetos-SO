@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "eventlist.h"
 
 #include "constants.h"
 #include "operations.h"
@@ -46,15 +47,18 @@ int main(int argc, char *argv[]) {
 
   while ((dp = readdir(dir)) != NULL) {
     int fdRead = 0;
-    // int fdWrite = 0;
+    int fdWrite = 0;
     
     // Encontra os ficheiros com extensão ".jobs"
     if (strstr(dp->d_name, ".jobs") != NULL) {
-      // Constrói o caminho completo do arquivo
-      char filepath[strlen(dirpath) + strlen("/") + strlen(dp->d_name) + 1];
-      strcpy(filepath, dirpath);
-      strcat(filepath, "/");
-      strcat(filepath, dp->d_name);
+      // Constrói o caminho completo dos ficheiros de entrada e saída
+      char filepathInput[strlen(dirpath) + strlen("/") + strlen(dp->d_name) + 1];
+      char filepathOutput[strlen(dirpath) + strlen("/") + strlen(dp->d_name)];
+
+      // Ficheiro de Input
+      strcpy(filepathInput, dirpath);
+      strcat(filepathInput, "/");
+      strcat(filepathInput, dp->d_name);
 
       // Manipulação de strings para criação do nome do ficheiro de output
       size_t size = strlen(dp->d_name) - 5;
@@ -63,9 +67,14 @@ int main(int argc, char *argv[]) {
       filename[size] = '\0';  // Adiciona o caractere nulo manualmente
       strcat(filename, ".out");
 
+      // Ficheiro de Output
+      strcpy(filepathOutput, dirpath);
+      strcat(filepathOutput, "/");
+      strcat(filepathOutput, filename);
+
       // Abre o ficheiro e cria ficheiro com extensão ".out"
-      fdRead = open(filepath, O_RDONLY);
-      // fdWrite = open(filename, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+      fdRead = open(filepathInput, O_RDONLY);
+      fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
 
       int flag = 1;
       while (flag == 1) {
@@ -76,7 +85,6 @@ int main(int argc, char *argv[]) {
         switch (get_next(fdRead)) {
 
           case CMD_CREATE:
-            printf("create\n");
             if (parse_create(fdRead, &event_id, &num_rows, &num_columns) != 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
@@ -89,7 +97,6 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_RESERVE:
-            printf("reserve\n");
             num_coords = parse_reserve(fdRead, MAX_RESERVATION_SIZE, &event_id, xs, ys);
 
             if (num_coords == 0) {
@@ -104,21 +111,19 @@ int main(int argc, char *argv[]) {
             break;
 
           case CMD_SHOW:
-            printf("show\n");
             if (parse_show(fdRead, &event_id) != 0) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
               continue;
             }
 
-            if (ems_show(event_id)) {
+            if (ems_show(fdWrite, event_id)) {
               fprintf(stderr, "Failed to show event\n");
             }
 
             break;
 
           case CMD_LIST_EVENTS:
-            printf("list\n");
-            if (ems_list_events()) {
+            if (ems_list_events(fdWrite)) {
               fprintf(stderr, "Failed to list events\n");
             }
 
@@ -159,7 +164,10 @@ int main(int argc, char *argv[]) {
             break;
 
           case EOC:
-            printf("entrou terminate \n");
+            ems_free_all_events();
+            ems_reset_event_list();
+            //close(fdRead);
+            //close(fdWrite);
             //ems_terminate();
             flag = 0;
         }

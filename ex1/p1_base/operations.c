@@ -1,8 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "eventlist.h"
+#include "operations.h"
+
+#define MAX_SIZE 100000
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
@@ -111,6 +117,17 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   return 0;
 }
 
+int ems_free_event(unsigned int event_id) {
+  struct Event* event = get_event_with_delay(event_id);
+
+  if (event != NULL) {
+    free(event->data);
+    free(event);
+  }
+
+  return 0;
+}
+
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
@@ -156,7 +173,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   return 0;
 }
 
-int ems_show(unsigned int event_id) {
+int ems_show(int fd, unsigned int event_id) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -169,38 +186,99 @@ int ems_show(unsigned int event_id) {
     return 1;
   }
 
+  // Escreve os lugares num buffer
+  char buffer[MAX_SIZE];
+  int bytes_written = 0;
+  int offset = 0;
+
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
       unsigned int* seat = get_seat_with_delay(event, seat_index(event, i, j));
-      printf("%u", *seat);
+      bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "%u", *seat));
+
+      if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
+        fprintf(stderr, "Failed to write in buffer\n");
+        return 1;
+      }
+      offset += bytes_written;
 
       if (j < event->cols) {
-        printf(" ");
+        offset = writeStringToBuffer(buffer, offset, " ");
       }
     }
 
-    printf("\n");
+    offset = writeStringToBuffer(buffer, offset, "\n");
+  }
+
+  // Escreve do buffer para o ficheiro utilizando o seu file descriptor
+  size_t len = (size_t) strlen(buffer);
+  int done = 0;
+  while (len > 0) {
+    bytes_written = (int) write(fd, buffer + done, len);
+
+    if (bytes_written < 0){
+        fprintf(stderr, "Failed to write in file: %s\n", strerror(errno));
+        return -1;
+    }
+
+    /* might not have managed to write all, len becomes what remains */
+    len -= (size_t) bytes_written;
+    done += bytes_written;
   }
 
   return 0;
 }
 
-int ems_list_events() {
+int ems_list_events(int fd) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
   }
 
+  char buffer[MAX_SIZE];
+  int bytes_written = 0;
+  int offset = 0;
+
+  // Escreve a informação num buffer
   if (event_list->head == NULL) {
-    printf("No events\n");
-    return 0;
+    offset = writeStringToBuffer(buffer, offset, "No events\n");
+    /*
+    bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "No events\n"));
+
+    if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
+      fprintf(stderr, "Failed to write in buffer\n");
+      return 1;
+    }
+    offset += bytes_written;
+    */
   }
 
   struct ListNode* current = event_list->head;
   while (current != NULL) {
-    printf("Event: ");
-    printf("%u\n", (current->event)->id);
+    bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "Event: %u\n", (current->event)->id));
+
+    if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
+      fprintf(stderr, "Failed to write in buffer\n");
+      return 1;
+    }
+    offset += bytes_written;
     current = current->next;
+  }
+
+  // Escreve do buffer para o ficheiro utilizando o seu file descriptor
+  size_t len = (size_t) strlen(buffer);
+  int done = 0;
+  while (len > 0) {
+    bytes_written = (int) write(fd, buffer + done, len);
+
+    if (bytes_written < 0){
+        fprintf(stderr, "Failed to write in file: %s\n", strerror(errno));
+        return -1;
+    }
+
+    /* might not have managed to write all, len becomes what remains */
+    len -= (size_t) bytes_written;
+    done += bytes_written;
   }
 
   return 0;
@@ -209,4 +287,44 @@ int ems_list_events() {
 void ems_wait(unsigned int delay_ms) {
   struct timespec delay = delay_to_timespec(delay_ms);
   nanosleep(&delay, NULL);
+}
+
+void ems_free_all_events() {
+    if (event_list == NULL) {
+        fprintf(stderr, "EMS state must be initialized\n");
+        return;
+    }
+
+    // Itera sobre a lista de eventos e libera cada evento
+    struct ListNode* current = event_list->head;
+    while (current != NULL) {
+        struct Event* event = current->event;
+        free(event->data);
+        free(event);
+        current = current->next;
+    }
+
+    // Libera a lista de eventos após liberar todos os eventos
+    //free_list(event_list);
+    free(event_list);
+
+    // Define event_list como NULL para evitar acessos inválidos
+    event_list = NULL;
+}
+
+void ems_reset_event_list() {
+  if (event_list == NULL) {
+    event_list = create_list();
+  }
+}
+
+int writeStringToBuffer(char* buffer, int offset, const char* inputString) {
+    int bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "%s", inputString));
+
+    if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
+        fprintf(stderr, "Falha ao escrever na memória do buffer\n");
+        return -1; // Indica um erro
+    }
+
+    return offset + bytes_written; // Retorna o novo offset
 }
