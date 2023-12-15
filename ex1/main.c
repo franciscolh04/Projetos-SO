@@ -74,7 +74,16 @@ int main(int argc, char *argv[]) {
 
       // Abre o ficheiro e cria ficheiro com extensão ".out"
       fdRead = open(filepathInput, O_RDONLY);
+      if (fdRead < 0) {
+        fprintf(stderr,"Failed to open .jobs file\n");
+        return 1;
+      }
+
       fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+      if (fdWrite < 0) {
+        fprintf(stderr,"Failed to create output file\n");
+        return 1;
+      }
 
       int flag = 1;
       while (flag == 1) {
@@ -166,13 +175,25 @@ int main(int argc, char *argv[]) {
           case EOC:
             ems_free_all_events();
             ems_reset_event_list();
-            //close(fdRead);
-            //close(fdWrite);
-            //ems_terminate();
+
+            if (close(fdRead) == -1) {
+              fprintf(stderr,"Failed to close file\n");
+              return 1;
+            }
+
+            if(close(fdWrite) == -1) {
+              fprintf(stderr,"Failed to close file\n");
+              return 1;
+            }
+
             flag = 0;
         }
       }
     }
   }
-  // Escrever
+  if (closedir(dir) == -1) {
+    fprintf(stderr, "Failed to close directory\n");
+    return 1;
+  }
+  return 0;
 }

@@ -25,20 +25,18 @@ struct ThreadArgs {
     int fdWrite;  // Descritor de arquivo de escrita
     pthread_mutex_t *mutex;  // mutex para a leitura e gravação
     int id; // thread id (tid)
-    int *wait_flags;
-    int num_threads;
+    int *wait_flags; // array de flags para as threads esperarem
+    int num_threads; // número de threads
 };
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
 
-pthread_rwlock_t write_lock;
-pthread_mutex_t write_file_mutex;
-pthread_mutex_t memory_mutex;
+pthread_mutex_t write_file_mutex; // mutex para escrever no ficheiro
+pthread_mutex_t memory_mutex; // mutex para aceder à memória
 
-
-unsigned int wait_id = 0;
-unsigned int wait_time = 0;
+unsigned int wait_id = 0; // id da thread a esperar
+unsigned int wait_time = 0; // tempo de espera
 
 int foundBarrier = 0; // flag para barreira
 
@@ -128,8 +126,10 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   event->reservations = 0;
   event->data = malloc(num_rows * num_cols * sizeof(unsigned int));
   event->mutexes = malloc(num_rows * num_cols * sizeof(pthread_mutex_t)); // mutex para cada lugar
-  pthread_mutex_init(&event->event_mutex, NULL);
-
+  if (pthread_mutex_init(&event->event_mutex, NULL) != 0) {
+    fprintf(stderr, "Error initializing mutex\n");
+    return 1;
+  }
 
   // Em caso de erro, liberta memória alocada
   if (event->data == NULL || event->mutexes == NULL) {
@@ -143,21 +143,32 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   // Inicializa mutex de todos os lugares
   for (size_t i = 0; i < num_rows * num_cols; i++) {
     event->data[i] = 0;
-    pthread_mutex_init(&event->mutexes[i],NULL);
-    
+    if (pthread_mutex_init(&event->mutexes[i],NULL) != 0) {
+      fprintf(stderr, "Error initializing mutex\n");
+      return 1;
+    }
   }
   
   // Em caso de erro a juntar à lista de eventos, liberta memória alocada
-  pthread_mutex_lock(&memory_mutex);
+  if (pthread_mutex_lock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  }
   if (append_to_list(event_list, event) != 0) {
     fprintf(stderr, "Error appending event to list\n");
     free(event->mutexes);
     free(event->data);
     free(event);
-    pthread_mutex_unlock(&memory_mutex);
+    if (pthread_mutex_unlock(&memory_mutex) != 0) {
+      fprintf(stderr, "Error unlocking mutex\n");
+      return 1;
+    }
     return 1;
   }
-  pthread_mutex_unlock(&memory_mutex);
+  if (pthread_mutex_unlock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
   return 0;
 }
@@ -173,6 +184,7 @@ int ems_free_event(unsigned int event_id) {
   return 0;
 }
 
+// Troca dois lugares nos vetores xs e ys
 void switch_seats(size_t* xs, size_t* ys, size_t i, size_t j) {
     size_t temp = xs[i];
     xs[i] = xs[j];
@@ -210,9 +222,15 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     return 1;
   }
 
-  pthread_mutex_lock(&memory_mutex); 
+  if (pthread_mutex_lock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  } 
   struct Event* event = get_event_with_delay(event_id);
-  pthread_mutex_unlock(&memory_mutex); 
+  if (pthread_mutex_unlock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
@@ -224,14 +242,16 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
     return 1;
   } 
   
+  // Bloqueia os mutexes dos lugares a reservar
   for (size_t a = 0; a < num_seats; a++) {
-    pthread_mutex_lock(&event->mutexes[seat_index(event, xs[a], ys[a])]);
-    
+    if (pthread_mutex_lock(&event->mutexes[seat_index(event, xs[a], ys[a])]) != 0) {
+      fprintf(stderr, "Error locking mutex\n");
+    }
   }
 
+  // Verifica se os lugares estão disponíveis
   size_t i = 0;
   for (; i < num_seats; i++) {
-    //printf("lugar: %lu;%lu\n",xs[i],ys[i]);
     size_t row = xs[i];
     size_t col = ys[i];
 
@@ -239,37 +259,48 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
       fprintf(stderr, "Invalid seat\n");
       break;
     }
-
     if (*get_seat_with_delay(event, seat_index(event, row, col)) != 0) {
       fprintf(stderr, "Seat already reserved\n");
       break;
     }
   }
+
+  // Se os lugares estiverem disponíveis, reserva-os
   if(i == num_seats) {
-    pthread_mutex_lock(&event->event_mutex);
+    if (pthread_mutex_lock(&event->event_mutex) != 0) {
+      fprintf(stderr, "Error locking mutex\n");
+      return 1;
+    }
     unsigned int reservation_id = ++event->reservations;
-    pthread_mutex_unlock(&event->event_mutex);
+    if (pthread_mutex_unlock(&event->event_mutex) != 0) {
+      fprintf(stderr, "Error unlocking mutex\n");
+      return 1;
+    }
     for ( i = 0; i < num_seats; i++) {
       size_t row = xs[i];
       size_t col = ys[i];
-        
       
       *get_seat_with_delay(event, seat_index(event, row, col)) = reservation_id;
       
     }
   }
 
-  // If the reservation was not successful, free the seats that were reserved.
+  // Se a reserva falhar, desbloqueia os mutexes dos lugares
   else if (i < num_seats) {
     for (size_t k = 0; k < num_seats; k++) {
-     
-      pthread_mutex_unlock(&event->mutexes[seat_index(event, xs[k], ys[k])]);
+      if (pthread_mutex_unlock(&event->mutexes[seat_index(event, xs[k], ys[k])]) != 0) {
+        fprintf(stderr, "Error unlocking mutex\n");
+        return 1;
+      }
     }
     return 1;
   }
   
   for (size_t k = 0; k < num_seats; k++) {
-    pthread_mutex_unlock(&event->mutexes[seat_index(event, xs[k], ys[k])]);
+    if (pthread_mutex_unlock(&event->mutexes[seat_index(event, xs[k], ys[k])]) != 0) {
+      fprintf(stderr, "Error unlocking mutex\n");
+      return 1;
+    }
   }
   return 0;
 }
@@ -280,9 +311,15 @@ int ems_show(int fd, unsigned int event_id) {
     return 1;
   }
 
-  pthread_mutex_lock(&memory_mutex); 
+  if (pthread_mutex_lock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  } 
   struct Event* event = get_event_with_delay(event_id);
-  pthread_mutex_unlock(&memory_mutex); 
+  if (pthread_mutex_unlock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
   if (event == NULL) {
     fprintf(stderr, "Event not found\n");
@@ -294,9 +331,13 @@ int ems_show(int fd, unsigned int event_id) {
   int bytes_written = 0;
   int offset = 0;
 
+  // Bloqueia os mutexes dos lugares a mostrar
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
-      pthread_mutex_lock(&event->mutexes[seat_index(event,i,j)]);
+      if (pthread_mutex_lock(&event->mutexes[seat_index(event,i,j)]) != 0) {
+        fprintf(stderr, "Error locking mutex\n");
+        return 1;
+      }
       unsigned int* seat = get_seat_with_delay(event, seat_index(event, i, j));
       bytes_written = ((int) snprintf(buffer + offset, (unsigned long) (MAX_SIZE - offset), "%u", *seat));
 
@@ -304,7 +345,10 @@ int ems_show(int fd, unsigned int event_id) {
         fprintf(stderr, "Failed to write in buffer\n");
         for (size_t a = 1; a <= i; a++) {
           for(size_t b = 1; b <= j; b++) {
-            pthread_mutex_unlock(&event->mutexes[seat_index(event,a,b)]);
+            if (pthread_mutex_unlock(&event->mutexes[seat_index(event,a,b)]) != 0) {
+              fprintf(stderr, "Error unlocking mutex\n");
+              return 1;
+            }
           }
         }
         return 1;
@@ -316,18 +360,24 @@ int ems_show(int fd, unsigned int event_id) {
       }
      
     }
-
     offset = writeStringToBuffer(buffer, offset, "\n");
   }
+
+  // Desbloqueia os mutexes dos lugares
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
-      pthread_mutex_unlock(&event->mutexes[seat_index(event,i,j)]);
+      if (pthread_mutex_unlock(&event->mutexes[seat_index(event,i,j)]) != 0) {
+        fprintf(stderr, "Error unlocking mutex\n");
+        return 1;
+      }
     }
   }
 
-  // Dar lock para ninguém escrever no ficheiro
-  pthread_mutex_lock(&write_file_mutex);
   // Escreve do buffer para o ficheiro utilizando o seu file descriptor
+  if (pthread_mutex_lock(&write_file_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  }
   size_t len = (size_t) strlen(buffer);
   int done = 0;
   while (len > 0) {
@@ -335,17 +385,21 @@ int ems_show(int fd, unsigned int event_id) {
 
     if (bytes_written < 0){
         fprintf(stderr, "Failed to write in file: %s\n", strerror(errno));
-        // Dar unlock
-        pthread_mutex_unlock(&write_file_mutex);
+        if (pthread_mutex_unlock(&write_file_mutex) != 0) {
+          fprintf(stderr, "Error unlocking mutex\n");
+          return 1;
+        }
         return -1;
     }
 
-    /* might not have managed to write all, len becomes what remains */
+    // Pode não ter conseguido escrever tudo, len torna-se o que falta
     len -= (size_t) bytes_written;
     done += bytes_written;
   }
-  
-  pthread_mutex_unlock(&write_file_mutex);
+  if (pthread_mutex_unlock(&write_file_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
   return 0;
 }
@@ -360,9 +414,12 @@ int ems_list_events(int fd) {
   int bytes_written = 0;
   int offset = 0;
 
-  // dar lock
-  pthread_mutex_lock(&memory_mutex); 
+
   // Escreve a informação num buffer
+  if (pthread_mutex_lock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  } 
   if (event_list->head == NULL) {
     offset = writeStringToBuffer(buffer, offset, "No events\n");
   }
@@ -373,17 +430,25 @@ int ems_list_events(int fd) {
 
     if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
       fprintf(stderr, "Failed to write in buffer\n");
-      pthread_mutex_unlock(&memory_mutex); 
-      return 1;
+      if (pthread_mutex_unlock(&memory_mutex) != 0) {
+        fprintf(stderr, "Error unlocking mutex\n");
+        return 1;
+      } 
+      return -1;
     }
     offset += bytes_written;
     current = current->next;
   }
-  pthread_mutex_unlock(&memory_mutex);
+  if (pthread_mutex_unlock(&memory_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
-  //Lock ao write_file_mutex
-  pthread_mutex_lock(&write_file_mutex);
   // Escreve do buffer para o ficheiro utilizando o seu file descriptor
+  if (pthread_mutex_lock(&write_file_mutex) != 0) {
+    fprintf(stderr, "Error locking mutex\n");
+    return 1;
+  }
   size_t len = (size_t) strlen(buffer);
   int done = 0;
   while (len > 0) {
@@ -391,15 +456,21 @@ int ems_list_events(int fd) {
 
     if (bytes_written < 0){
         fprintf(stderr, "Failed to write in file: %s\n", strerror(errno));
-        pthread_mutex_unlock(&write_file_mutex);
+        if (pthread_mutex_unlock(&write_file_mutex) != 0) {
+          fprintf(stderr, "Error unlocking mutex\n");
+          return 1;
+        }
         return -1;
     }
 
-    /* might not have managed to write all, len becomes what remains */
+    // Pode não ter conseguido escrever tudo, len torna-se o que falta
     len -= (size_t) bytes_written;
     done += bytes_written;
   }
-  pthread_mutex_unlock(&write_file_mutex);
+  if (pthread_mutex_unlock(&write_file_mutex) != 0) {
+    fprintf(stderr, "Error unlocking mutex\n");
+    return 1;
+  }
 
   return 0;
 }
@@ -414,14 +485,11 @@ int writeStringToBuffer(char* buffer, int offset, const char* inputString) {
 
     if (bytes_written < 0 || bytes_written >= MAX_SIZE - offset) {
         fprintf(stderr, "Falha ao escrever na memória do buffer\n");
-        //pthread_mutex_unlock(&write_file_mutex);
-        return -1; // Indica um erro
+        return -1;
     }
 
     return offset + bytes_written; // Retorna o novo offset
 }
-
-
 
 // Função da thread
 void* execute_commands(void *args) {
@@ -437,37 +505,56 @@ void* execute_commands(void *args) {
 
   int flag = 1;
   while (flag == 1) {
-    // Bloquear a secção crítica para leitura
-    pthread_mutex_lock(mutex_t);
+    // Bloqueia o mutex para a leitura e escrita
+    if (pthread_mutex_lock(mutex_t) != 0) {
+      fprintf(stderr, "Error locking mutex\n");
+      return (void*) 1;
+    }
+    
+    // Verifica se a flag de barreira está ativa
     if(foundBarrier == 1) {
-      pthread_mutex_unlock(mutex_t);
+      if (pthread_mutex_unlock(mutex_t) != 0) {
+        fprintf(stderr, "Error unlocking mutex\n");
+        return (void*) 1;
+      }
       return (void*)1;
     }
+    // Espera se a flag de espera estiver ativa
     if(threadArgs->wait_flags[thread_id]) {
       printf("Waiting...\n");
       ems_wait(wait_time);
       threadArgs->wait_flags[thread_id] = 0;
     }
 
+    // Lê o comando
     switch (get_next(fdRead)) {
         case CMD_CREATE:
           if (parse_create(fdRead, &event_id, &num_rows, &num_columns) != 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
-            pthread_mutex_unlock(mutex_t);
+            if (pthread_mutex_unlock(mutex_t) != 0) {
+              fprintf(stderr, "Error unlocking mutex\n");
+              return (void*) 1;
+            }
             continue;
           }
 
           if (ems_create(event_id, num_rows, num_columns)) {
             fprintf(stderr, "Failed to create event\n");
           }
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
 
           break;
 
         case CMD_RESERVE:
           num_coords = parse_reserve(fdRead, MAX_RESERVATION_SIZE, &event_id, xs, ys);
 
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
 
           if (num_coords == 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
@@ -483,19 +570,28 @@ void* execute_commands(void *args) {
         case CMD_SHOW:
           if (parse_show(fdRead, &event_id) != 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
-            pthread_mutex_lock(&memory_mutex); 
+            if (pthread_mutex_lock(&memory_mutex) != 0) {
+              fprintf(stderr, "Error locking mutex\n");
+              return (void*) 1;
+            } 
             continue;
           }
 
           if (ems_show(fdWrite, event_id)) {
             fprintf(stderr, "Failed to show event\n");
           }
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
           
           break;
 
         case CMD_LIST_EVENTS:
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
 
           if (ems_list_events(fdWrite)) {
             fprintf(stderr, "Failed to list events\n");
@@ -506,7 +602,10 @@ void* execute_commands(void *args) {
         case CMD_WAIT:
           if (parse_wait(fdRead, &wait_time, &wait_id) == -1) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
-            pthread_mutex_unlock(mutex_t);
+            if (pthread_mutex_unlock(mutex_t) != 0) {
+              fprintf(stderr, "Error unlocking mutex\n");
+              return (void*) 1;
+            }
             continue;
           }
 
@@ -519,18 +618,27 @@ void* execute_commands(void *args) {
             threadArgs->wait_flags[wait_id] = 1;
           }
 
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
 
           break;
 
         case CMD_INVALID:
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
           fprintf(stderr, "Invalid command. See HELP for usage\n");
 
           break;
         
         case CMD_HELP:
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
           printf(
           "Available commands:\n"
           "  CREATE <event_id> <num_rows> <num_columns>\n"
@@ -546,35 +654,34 @@ void* execute_commands(void *args) {
         case CMD_BARRIER:
           foundBarrier = 1;
 
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
           
           return (void*)1;
 
         case CMD_EMPTY:
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
 
           break;
 
         case EOC:
-          pthread_mutex_unlock(mutex_t);
+          if (pthread_mutex_unlock(mutex_t) != 0) {
+            fprintf(stderr, "Error unlocking mutex\n");
+            return (void*) 1;
+          }
           flag = 0;
           break;
-          //return (void*)0;
-          
-          
     }
-    
   }
-  
   return (void*)0;
 }
 
-
-
-
-
-void ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS) {
-
+int ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS) {
   int fdRead = 0;
   int fdWrite = 0;
 
@@ -609,7 +716,16 @@ void ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS) {
 
   // Abre o ficheiro e cria ficheiro com extensão ".out"
   fdRead = open(filepathInput, O_RDONLY);
+  if (fdRead < 0) {
+    fprintf(stderr,"Failed to open .jobs file\n");
+    return 1;
+  }
+
   fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+  if (fdWrite < 0) {
+    fprintf(stderr,"Failed to create output file\n");
+    return 1;
+  }
 
   // Criar e configurar mutex para secção crítica
   pthread_mutex_t mutex;
@@ -618,14 +734,22 @@ void ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS) {
   pthread_t threads[MAX_THREADS];
   struct ThreadArgs threadArgs[MAX_THREADS];
 
-  //pthread_mutex_init(&mutex_reserve, NULL);
-  pthread_mutex_init(&mutex, NULL);
-  pthread_mutex_init(&write_file_mutex, NULL);
-  pthread_mutex_init(&memory_mutex, NULL);
+  // Inicializa mutexes
+  if (pthread_mutex_init(&mutex, NULL) != 0) {
+    fprintf(stderr, "Error initializing mutex\n");
+    return 1;
+  }
+  if (pthread_mutex_init(&write_file_mutex, NULL) != 0) {
+    fprintf(stderr, "Error initializing mutex\n");
+    return 1;
+  }
+  if (pthread_mutex_init(&memory_mutex, NULL) != 0) {
+    fprintf(stderr, "Error initializing mutex\n");
+    return 1;
+  }
   
   while (flag) {
     foundBarrier = 0;
-    
 
     for (int i = 0; i < MAX_THREADS; ++i) {
       threadArgs[i].fdRead = fdRead;
@@ -636,25 +760,52 @@ void ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS) {
       threadArgs[i].num_threads = MAX_THREADS;
 
       // Criar thread
-      pthread_create(&threads[i], 0, execute_commands, (void *)&threadArgs[i]);
+      if (pthread_create(&threads[i], 0, execute_commands, (void *)&threadArgs[i]) != 0) {
+        fprintf(stderr, "Error creating thread\n");
+        return 1;
+      }
     }
 
     // Aguardar a conclusão de todas as threads
     flag = 0;
     for (int i = 0; i < MAX_THREADS; ++i) {
       void *retorno;
-      pthread_join(threads[i], &retorno);
+      if (pthread_join(threads[i], &retorno) != 0) {
+        fprintf(stderr, "Error joining thread\n");
+        return 1;
+      }
       
       if (retorno == (void*) 1) {
         flag = 1;
       }
     }
   }
-  pthread_mutex_destroy(&write_file_mutex);
-  pthread_mutex_destroy(&mutex);
-  pthread_mutex_destroy(&memory_mutex);
+
+  // Destrói mutexes
+  if (pthread_mutex_destroy(&write_file_mutex) != 0) {
+    fprintf(stderr, "Error destroying mutex\n");
+    return 1;
+  }
+  if (pthread_mutex_destroy(&mutex) != 0) {
+    fprintf(stderr, "Error destroying mutex\n");
+    return 1;
+  }
+  if (pthread_mutex_destroy(&memory_mutex) != 0) {
+    fprintf(stderr, "Error destroying mutex\n");
+    return 1;
+  }
 
   ems_terminate();
-  close(fdRead);
-  close(fdWrite);
+
+  // Fecha os ficheiros
+  if (close(fdRead) == -1) {
+    fprintf(stderr,"Failed to close file\n");
+    return 1;
+  }
+
+  if(close(fdWrite) == -1) {
+    fprintf(stderr,"Failed to close file\n");
+    return 1;
+  }
+  return 0;
 }

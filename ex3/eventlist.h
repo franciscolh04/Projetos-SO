@@ -13,11 +13,9 @@ struct Event {
   size_t cols;  /// Number of columns.
   size_t rows;  /// Number of rows.
 
-
   unsigned int* data;  /// Array of size rows * cols with the reservations for each seat.
   pthread_mutex_t* mutexes;/// Array of size rows * cols with the mutex for each seat.
-
-  pthread_mutex_t event_mutex;
+  pthread_mutex_t event_mutex; /// Mutex for the event.
 };
 
 struct ListNode {

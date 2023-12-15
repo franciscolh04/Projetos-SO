@@ -326,7 +326,7 @@ int writeStringToBuffer(char* buffer, int offset, const char* inputString) {
     return offset + bytes_written; // Retorna o novo offset
 }
 
-void ems_execute_child(struct dirent *dp, char *dirpath) {
+int ems_execute_child(struct dirent *dp, char *dirpath) {
   int fdRead = 0;
   int fdWrite = 0;
 
@@ -353,7 +353,16 @@ void ems_execute_child(struct dirent *dp, char *dirpath) {
 
   // Abre o ficheiro e cria ficheiro com extensão ".out"
   fdRead = open(filepathInput, O_RDONLY);
+  if (fdRead < 0) {
+    fprintf(stderr,"Failed to open .jobs file\n");
+    return 1;
+  }
+
   fdWrite = open(filepathOutput, O_CREAT | O_TRUNC | O_WRONLY , S_IRUSR | S_IWUSR);
+  if (fdWrite < 0) {
+    fprintf(stderr,"Failed to create output file\n");
+    return 1;
+  }
 
   int flag = 1;
   while (flag == 1) {
@@ -445,10 +454,18 @@ void ems_execute_child(struct dirent *dp, char *dirpath) {
       case EOC:
         ems_free_all_events();
         ems_reset_event_list();
-        close(fdRead);
-        close(fdWrite);
-        //ems_terminate();
+
+        if (close(fdRead) == -1) {
+          fprintf(stderr,"Failed to close file\n");
+          return 1;
+        }
+        if(close(fdWrite) == -1) {
+          fprintf(stderr,"Failed to close file\n");
+          return 1;
+        }
+
         flag = 0;
     }
   }
+  return 0;
 }

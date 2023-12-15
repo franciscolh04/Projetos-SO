@@ -42,16 +42,19 @@ int ems_list_events(int fd);
 /// @param delay_us Delay in milliseconds.
 void ems_wait(unsigned int delay_ms);
 
-void ems_free_all_events();
-void ems_reset_event_list();
+/// Prints the given string to the given file descriptor.
 int writeStringToBuffer(char* buffer, int offset, const char* inputString);
 
-void ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS);
+/// Executes the child process
+int ems_execute_child(struct dirent *dp, char *dirpath, int MAX_THREADS);
 
+/// Executes the commands
 void *execute_commands(void *args);
 
+/// Switches the seats at the given indices.
 void switch_seats(size_t* xs, size_t* ys, size_t i, size_t j);
 
+/// Sorts the seats at the given indices.
 int sort_seats(size_t num_seats, size_t* xs, size_t* ys);
 
 #endif  // EMS_OPERATIONS_H

@@ -60,24 +60,29 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create a child process\n");
         exit(EXIT_FAILURE);
       }
-
       else if (pid == 0) {
-       
-        ems_execute_child(dp, dirpath, MAX_THREADS);
+        if(ems_execute_child(dp, dirpath, MAX_THREADS)) {
+          fprintf(stderr, "Failed to execute\n");
+          exit(EXIT_FAILURE);
+        }
         exit(EXIT_SUCCESS);
       }
 
       if (pid > 0) {
-        
         activeProcesses++;
         //Espera a conclusão do processo filho se atingir o número máximo de processos ativos
         if(activeProcesses >= MAX_PROC) {
           int status;
           pid_t terminated_pid = wait(&status);
+          if (terminated_pid == -1) {
+            fprintf(stderr, "Failed to wait for child process\n");
+            exit(EXIT_FAILURE);
+          }
 
           if (WIFEXITED(status)) {
               printf("Processo filho %d terminado com estado %d\n", terminated_pid, WEXITSTATUS(status));
-          } else if (WIFSIGNALED(status)) {
+          }
+          else if (WIFSIGNALED(status)) {
               printf("Processo filho %d terminado por signal %d\n", terminated_pid, WTERMSIG(status));
           }
 
@@ -90,13 +95,22 @@ int main(int argc, char *argv[]) {
     int status = 0;
     pid_t terminated_pid;
     while ((terminated_pid = wait(&status)) > 0) {
+        if (terminated_pid == -1) {
+            fprintf(stderr, "Failed to wait for child process\n");
+            exit(EXIT_FAILURE);
+        }
+
         if (WIFEXITED(status)) {
             printf("Processo filho %d terminado com estado %d\n", terminated_pid, WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
+        }
+        else if (WIFSIGNALED(status)) {
             printf("Processo filho %d terminado por signal %d\n", terminated_pid, WTERMSIG(status));
         }
     }
   }
-  closedir(dir);
+  if (closedir(dir) == -1) {
+    fprintf(stderr, "Failed to close directory\n");
+    return 1;
+  }
   return 0;
 }
