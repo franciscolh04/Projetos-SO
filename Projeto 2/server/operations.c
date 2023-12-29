@@ -3,9 +3,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "common/io.h"
 #include "eventlist.h"
+#include "operations.h"
 
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_us = 0;
@@ -280,4 +283,27 @@ int ems_list_events(int out_fd) {
 
   pthread_rwlock_unlock(&event_list->rwl);
   return 0;
+}
+
+int ems_setup(char buffer[82], struct Session *session) {
+  session->session_id = 1;
+
+  // Parsing da mensagem de pedido
+  memcpy(session->req_pipe_path, &buffer[1], 40);
+  memcpy(session->resp_pipe_path, &buffer[41], 40);
+
+  //TODO: Write new client to the producer-consumer buffer
+  int resp_fd = open(session->resp_pipe_path, O_WRONLY);
+  if (resp_fd == -1) {
+    fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+    ems_terminate();
+    return 1;
+  }
+
+  char session_id_str[20]; // Garantir que o número cabe no buffer
+  sprintf(session_id_str, "%d", session->session_id);
+
+  // Return session_id to client
+  print_str(resp_fd, session_id_str);
+  close(resp_fd);
 }

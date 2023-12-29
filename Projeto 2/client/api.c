@@ -19,17 +19,17 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
   }
 
   client = malloc(sizeof(struct Client));
-  // malloc a paths das pipes
   if (client == NULL) {
     fprintf(stderr, "Error allocating memory for client\n");
     return 1;
   }
   strcpy(client->req_pipe_path, req_pipe_path);
   strcpy(client->resp_pipe_path, resp_pipe_path);
-  client->session_id = 1;
 
-  char message[strlen(req_pipe_path) + strlen(resp_pipe_path) + 3];
-  sprintf(message, "%s %s", req_pipe_path, resp_pipe_path);
+  char message[82]; // 1 + 40 + 40 + 1
+  message[0] = '1';
+  strncpy(&message[1], req_pipe_path, 40);
+  strncpy(&message[41], resp_pipe_path, 40);
 
   // Conectar ao servidor -> escrever no pipe do server
   int server_fd = open(server_pipe_path, O_WRONLY);
@@ -37,25 +37,32 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
     fprintf(stderr, "[ERR]: open server pipe failed: %s\n", strerror(errno));
     return 1;
   }
-  print_str(server_fd, message);
+  print_str_size(server_fd, message, 82);
+  close(server_fd);
 
 
-  // Abrir pipe de request para escrita e pipe de response para leitura
-  /*
-  int read_resp_fd = open(resp_pipe_path, O_RDONLY);
-  if (read_resp_fd == -1) {
+  // Abrir pipe de response para leitura
+  int resp_fd = open(resp_pipe_path, O_RDONLY);
+  if (resp_fd == -1) {
     fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
     return 1;
   }
 
-  int write_req_fd = open(req_pipe_path, O_WRONLY);
-  if (write_req_fd == -1) {
-    fprintf(stderr, "[ERR]: open failed: %s\n", strerror(errno));
+  char session_id_str[2000];
+
+  // Ler o session_id do response pipe
+  ssize_t bytesRead = read(resp_fd, session_id_str, sizeof(session_id_str));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    ems_quit();
     return 1;
   }
-  */
+  close(resp_fd);
 
   // Associar session id ao named pipe do server
+  client->session_id = atoi(session_id_str);
+
   return 0;
 }
 
@@ -71,19 +78,51 @@ int ems_quit(void) {
   };
   
   free(client);
-
-  // falta dar free a paths das pipes
-  // return 1 em caso de erro
   return 0;
 }
 
 int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   //TODO: send create request to the server (through the request pipe) and wait for the response (through the response pipe)
+  char message[1 + sizeof(unsigned int) + 2 * sizeof(size_t)];
+  message[0] = '3';
+
+  memcpy(&message[1], &event_id, sizeof(unsigned int));
+  memcpy(&message[1 + sizeof(unsigned int)], &num_rows, sizeof(size_t));
+  memcpy(&message[1 + sizeof(unsigned int) + sizeof(size_t)], &num_cols, sizeof(size_t));
+
+  // Open request pipe to send
+  int req_fd = open(client->req_pipe_path, O_WRONLY);
+  if (req_fd == -1) {
+    fprintf(stderr, "[ERR]: open server pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+  print_str_size(req_fd, message, 1 + sizeof(unsigned int) + 2 * sizeof(size_t));
+  close(req_fd);
+
+  // Open response pipe to receive
   return 1;
 }
 
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
   //TODO: send reserve request to the server (through the request pipe) and wait for the response (through the response pipe)
+  char message[1 + sizeof(unsigned int) + sizeof(size_t) + 2 * (num_seats * sizeof(size_t))];
+  message[0] = '4';
+
+  memcpy(&message[1], &event_id, sizeof(unsigned int));
+  memcpy(&message[1 + sizeof(unsigned int)], &num_seats, sizeof(size_t));
+  memcpy(&message[1 + sizeof(unsigned int) + sizeof(size_t)], xs, num_seats * sizeof(size_t));
+  memcpy(&message[1 + sizeof(unsigned int) + (num_seats + 1) * sizeof(size_t)], ys, num_seats * sizeof(size_t));
+
+  // Open request pipe to send
+  int req_fd = open(client->req_pipe_path, O_WRONLY);
+  if (req_fd == -1) {
+    fprintf(stderr, "[ERR]: open server pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+  print_str_size(req_fd, message, 1 + sizeof(unsigned int) + sizeof(size_t) + 2 * (num_seats * sizeof(size_t)));
+  close(req_fd);
+
+  // Open response pipe to receive
   return 1;
 }
 

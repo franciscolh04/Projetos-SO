@@ -20,4 +20,11 @@ int print_uint(int fd, unsigned int value);
 /// @return 0 if the string was written successfully, 1 otherwise.
 int print_str(int fd, const char *str);
 
+/// Writes a string to the given file descriptor.
+/// @param fd The file descriptor to write to.
+/// @param str The string to write.
+/// @param size The size of the string to write.
+/// @return 0 if the string was written successfully, 1 otherwise.
+int print_str_size(int fd, const char *str, int size);
+
 #endif  // COMMON_IO_H

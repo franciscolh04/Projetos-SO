@@ -3,6 +3,20 @@
 
 #include <stddef.h>
 
+#define EMS_SETUP 1
+#define EMS_QUIT 2
+#define EMS_CREATE 3
+#define EMS_RESERVE 4
+#define EMS_SHOW 5
+#define EMS_LIST_EVENTS 6
+#define EOC 7
+
+struct Session {
+    int session_id;
+    char req_pipe_path[40];
+    char resp_pipe_path[40];
+};
+
 /// Initializes the EMS state.
 /// @param delay_us Delay in microseconds.
 /// @return 0 if the EMS state was initialized successfully, 1 otherwise.
@@ -36,5 +50,7 @@ int ems_show(int out_fd, unsigned int event_id);
 /// @param out_fd File descriptor to print the events to.
 /// @return 0 if the events were printed successfully, 1 otherwise.
 int ems_list_events(int out_fd);
+
+int ems_setup(char buffer[82], struct Session *session);
 
 #endif  // SERVER_OPERATIONS_H
