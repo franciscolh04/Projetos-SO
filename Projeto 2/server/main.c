@@ -51,20 +51,27 @@ int main(int argc, char* argv[]) {
     ems_terminate();
     return 1;
   }
-  // Lê paths de pipes de request e response e conecta-se a eles
-  char buffer[82]; // MAX SIZE OF 2 PATHS (verificar depois)
-  ssize_t bytesRead = read(server_fd, buffer, sizeof(buffer));
-  if (bytesRead == -1) {
-    fprintf(stderr, "[ERR]: read from server pipe failed: %s\n", strerror(errno));
-    close(server_fd);
-    ems_terminate();
-    return 1;
-  }
-  int OP_CODE = buffer[0] - '0';
+  int OP_CODE = 0;
   struct Session *session = malloc(sizeof(struct Session));
+  char buffer[82]; // MAX SIZE OF 2 PATHS (verificar depois)
+  ssize_t bytesRead;
 
   while (1) {
-    if (initialized_server) {
+    if (!initialized_server) {
+      printf("server não inicializado\n");
+      // Lê paths de pipes de request e response e conecta-se a eles
+      bytesRead = read(server_fd, buffer, sizeof(buffer));
+      if (bytesRead == -1) {
+        fprintf(stderr, "[ERR]: read from server pipe failed: %s\n", strerror(errno));
+        close(server_fd);
+        ems_terminate();
+        return 1;
+      }
+      OP_CODE = buffer[0] - '0';
+      printf("OP CODE: %d\n", OP_CODE);
+    }
+    else {
+      printf("server inicializado\n");
       // Open request pipe for reading
       int req_fd = open(session->req_pipe_path, O_RDWR);
       if (req_fd == -1) {
@@ -87,6 +94,7 @@ int main(int argc, char* argv[]) {
       }
       OP_CODE = buffer[0] - '0';
     }
+    printf("vai switch, OP CODE: %d\n", OP_CODE);
 
     switch(OP_CODE) {
       case EMS_SETUP:
@@ -96,7 +104,13 @@ int main(int argc, char* argv[]) {
         break;
       
       case EMS_QUIT:
-        printf("entrou quit\n");
+        printf("entrou quit server\n");
+        initialized_server = 0;
+        if (unlink(session->req_pipe_path) != 0 && errno != ENOENT) {
+          fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", session->req_pipe_path, strerror(errno));
+          return 1;
+        };
+        //ems_terminate();
         break;
       
       case EMS_CREATE:
@@ -112,14 +126,25 @@ int main(int argc, char* argv[]) {
         // JÁ RECEBE OS DADOS BEM, FALTA CHAMAR O EMS_CREATE DO SERVER E RETORNAR VALOR PARA O CLIENTE
 
         // Chama ems_create() com os dados fornecidos
+        int response_val = ems_create(event_id, num_rows, num_cols);
 
         // Retorna valor ao cliente pela response pipe
+        int resp_fd = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd == -1) {
+          fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+          return 1;
+        }
+        char response[sizeof(int)];
+        memcpy(&response, &response_val, sizeof(int));
+        print_str_size(resp_fd, response, sizeof(int));
+        close(resp_fd);
+
         break;
 
       case EMS_RESERVE:
         printf("entrou reserve\n");
         // Obtém dados enviados pela request pipe
-        size_t num_seats;
+        size_t num_seats = 0;
         size_t *xs = malloc(num_seats * sizeof(size_t));
         size_t *ys = malloc(num_seats * sizeof(size_t));
         memcpy(&event_id, &buffer[1], sizeof(unsigned int));
@@ -127,31 +152,37 @@ int main(int argc, char* argv[]) {
         memcpy(xs, &buffer[1 + sizeof(unsigned int) + sizeof(size_t)], num_seats * sizeof(size_t));
         memcpy(ys, &buffer[1 + sizeof(unsigned int) + sizeof(size_t) + num_seats * sizeof(size_t)], num_seats * sizeof(size_t));
 
-        printf("Event id: %d\n", event_id);
-        printf("Num seats: %zu\n", num_seats);
-        for (size_t i = 0; i < num_seats; i++) {
-          printf("(xs[i], ys[i]) = (%zu, %zu)\n", xs[i], ys[i]);
-        }
-
-        // JÁ RECEBE OS DADOS BEM, FALTA CHAMAR O EMS_RESERVE DO SERVER E RETORNAR VALOR PARA O CLIENTE
-
         // Chama ems_reserve() com os dados fornecidos
+        response_val = ems_reserve(event_id, num_seats, xs, ys);
 
         // Retorna valor ao cliente pela response pipe
+        resp_fd = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd == -1) {
+          fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+          return 1;
+        }
+        memcpy(&response, &response_val, sizeof(int));
+        print_str_size(resp_fd, response, sizeof(int));
+        close(resp_fd);
 
         break;
       
       case EMS_SHOW:
         printf("entrou show\n");
+        // Obtém dados enviados pela request pipe
+        memcpy(&event_id, &buffer[1], sizeof(unsigned int));
+
         break;
       
       case EMS_LIST_EVENTS:
         printf("entrou list events\n");
+        // Chama ems_list_events()
         break;
       
       case EOC:
+        printf("entrou EOC\n");
         ems_terminate();
-        return 1;
+        //return 1;
     }
   }
 

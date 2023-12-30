@@ -66,14 +66,28 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
   return 0;
 }
 
-int ems_quit(void) { 
-  //TODO: close pipes
-  if (unlink(client->req_pipe_path) != 0 && errno != ENOENT) {
-    fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", client->req_pipe_path, strerror(errno));
+int ems_quit(void) {
+  printf("entrou ems_quit client\n");
+  //TODO: send create request to the server (through the request pipe)
+  char message[1];
+  message[0] = '2';
+
+  // Open request pipe to send
+  int req_fd = open(client->req_pipe_path, O_WRONLY);
+  if (req_fd == -1) {
+    fprintf(stderr, "[ERR]: open server pipe failed: %s\n", strerror(errno));
     return 1;
-  };
+  }
+  print_str_size(req_fd, message, 1);
+  close(req_fd);
+
+  //TODO: close pipes
   if (unlink(client->resp_pipe_path) != 0 && errno != ENOENT) {
     fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", client->resp_pipe_path, strerror(errno));
+    return 1;
+  };
+  if (unlink(client->req_pipe_path) != 0 && errno != ENOENT) {
+    fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", client->req_pipe_path, strerror(errno));
     return 1;
   };
   
@@ -100,7 +114,27 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   close(req_fd);
 
   // Open response pipe to receive
-  return 1;
+  int resp_fd = open(client->resp_pipe_path, O_RDONLY);
+  if (resp_fd == -1) {
+    fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+
+  // Read from pipe
+  char response[sizeof(int)];
+  ssize_t bytesRead = read(resp_fd, response, sizeof(response));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from responde pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  close(resp_fd);
+
+  int response_val;
+  memcpy(&response_val, &response, sizeof(int));
+  printf("Response create: %d\n", response_val);
+
+  return response_val;
 }
 
 int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys) {
@@ -123,15 +157,52 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   close(req_fd);
 
   // Open response pipe to receive
-  return 1;
+  int resp_fd = open(client->resp_pipe_path, O_RDONLY);
+  if (resp_fd == -1) {
+    fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+
+  // Read from pipe
+  char response[sizeof(int)];
+  ssize_t bytesRead = read(resp_fd, response, sizeof(response));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from responde pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  close(resp_fd);
+
+  int response_val;
+  memcpy(&response_val, &response, sizeof(int));
+  printf("Response reserve: %d\n", response_val);
+
+  return response_val;
 }
 
 int ems_show(int out_fd, unsigned int event_id) {
   //TODO: send show request to the server (through the request pipe) and wait for the response (through the response pipe)
+  char message[1 + sizeof(unsigned int)];
+  message[0] = '5';
+
+  memcpy(&message[1], &event_id, sizeof(unsigned int));
+
+  // Open request pipe to send
+  int req_fd = open(client->req_pipe_path, O_WRONLY);
+  if (req_fd == -1) {
+    fprintf(stderr, "[ERR]: open request pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+  print_str_size(req_fd, message, 1 + sizeof(unsigned int));
+  close(req_fd);
+
+  // Open response pipe to receive
   return 1;
 }
 
 int ems_list_events(int out_fd) {
   //TODO: send list request to the server (through the request pipe) and wait for the response (through the response pipe)
+  char message[1 + sizeof(unsigned int)];
+  message[0] = '6';
   return 1;
 }
