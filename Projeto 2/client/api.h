@@ -11,6 +11,7 @@ struct Client {
     int session_id;         // Identificador da sessão
     int req_fd;                // File descriptor of request pipe
     int resp_fd;               // File descriptor of response pipe
+    int out_fd;                // File descriptor of output file
 };
 
 

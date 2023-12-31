@@ -116,7 +116,6 @@ int main(int argc, char* argv[]) {
         break;
 
       case EOC:
-        printf("entrou EOC client\n");
         close(in_fd);
         close(out_fd);
         ems_quit();

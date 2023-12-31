@@ -178,7 +178,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   return 0;
 }
 
-int ems_show(int out_fd, unsigned int event_id) {
+int ems_show(char **message, unsigned int event_id) {
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -203,38 +203,34 @@ int ems_show(int out_fd, unsigned int event_id) {
     return 1;
   }
 
+  char info[2 * sizeof(size_t) + (event->rows * event->cols) * sizeof(size_t)];
+  memcpy(&info, &event->rows, sizeof(size_t));
+  memcpy(&info[sizeof(size_t)], &event->cols, sizeof(size_t));
+
+  // Copy data to info
+  size_t data_index = 2 * sizeof(size_t);
   for (size_t i = 1; i <= event->rows; i++) {
     for (size_t j = 1; j <= event->cols; j++) {
-      char buffer[16];
-      sprintf(buffer, "%u", event->data[seat_index(event, i, j)]);
+      char buffer[sizeof(size_t)];
+      snprintf(buffer, sizeof(size_t), "%u", event->data[seat_index(event, i, j)]);
+      printf("%s ", buffer);
 
-      if (print_str(out_fd, buffer)) {
-        perror("Error writing to file descriptor");
-        pthread_mutex_unlock(&event->mutex);
-        return 1;
-      }
-
-      if (j < event->cols) {
-        if (print_str(out_fd, " ")) {
-          perror("Error writing to file descriptor");
-          pthread_mutex_unlock(&event->mutex);
-          return 1;
-        }
-      }
+      // Copy string representation of data to info
+      memcpy(&info[data_index], &event->data[seat_index(event, i, j)], sizeof(size_t));
+      data_index += sizeof(size_t);
     }
-
-    if (print_str(out_fd, "\n")) {
-      perror("Error writing to file descriptor");
-      pthread_mutex_unlock(&event->mutex);
-      return 1;
-    }
+    printf("\n");
   }
 
   pthread_mutex_unlock(&event->mutex);
+
+  *message = malloc(2 * sizeof(size_t) + + (event->rows * event->cols) * sizeof(size_t));
+  memcpy(*message, info, 2 * sizeof(size_t) + + (event->rows * event->cols) * sizeof(size_t));
   return 0;
 }
 
-int ems_list_events(int out_fd) {
+int ems_list_events(char **message) {
+  printf("entrou operations\n");
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;
@@ -249,39 +245,42 @@ int ems_list_events(int out_fd) {
   struct ListNode* current = event_list->head;
 
   if (current == NULL) {
-    char buff[] = "No events\n";
-    if (print_str(out_fd, buff)) {
-      perror("Error writing to file descriptor");
-      pthread_rwlock_unlock(&event_list->rwl);
-      return 1;
-    }
+    printf("current NULL\n");
+    size_t num = 0;
+    *message = malloc(sizeof(size_t));
+    memcpy(*message, &num, sizeof(size_t));
 
     pthread_rwlock_unlock(&event_list->rwl);
     return 0;
   }
-
+  
+  size_t data_index = 1;
+  *message = malloc(sizeof(size_t) + sizeof(unsigned int));
   while (1) {
-    char buff[] = "Event: ";
-    if (print_str(out_fd, buff)) {
-      perror("Error writing to file descriptor");
-      pthread_rwlock_unlock(&event_list->rwl);
-      return 1;
+    // Calcular o novo tamanho
+    size_t new_size = sizeof(size_t) + ((data_index) * sizeof(unsigned int));
+    
+    // Realocar o bloco de memória
+    void *temp = realloc(*message, new_size);
+    if (temp == NULL) {
+        // Trate o erro de realocação
+        perror("Erro na realocação de memória");
+        free(*message);  // Libere a memória original
+        pthread_rwlock_unlock(&event_list->rwl);
+        return 1;  // Retorne um código de erro
     }
-
-    char id[16];
-    sprintf(id, "%u\n", (current->event)->id);
-    if (print_str(out_fd, id)) {
-      perror("Error writing to file descriptor");
-      pthread_rwlock_unlock(&event_list->rwl);
-      return 1;
-    }
+    *message = temp;
+    
+    // Copiar o novo ID
+    memcpy(*message + sizeof(size_t) + ((data_index - 1) * sizeof(unsigned int)), &((current->event)->id), sizeof(unsigned int));
 
     if (current == to) {
-      break;
+        break;
     }
-
+    data_index++;
     current = current->next;
   }
+  memcpy(*message, &data_index, sizeof(size_t));
 
   pthread_rwlock_unlock(&event_list->rwl);
   return 0;
@@ -308,4 +307,5 @@ int ems_setup(char buffer[82], struct Session *session) {
   // Return session_id to client
   print_str(resp_fd, session_id_str);
   close(resp_fd);
+  return 0;
 }

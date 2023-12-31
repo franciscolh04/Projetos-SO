@@ -94,23 +94,20 @@ int main(int argc, char* argv[]) {
       }
       OP_CODE = buffer[0] - '0';
     }
-    printf("vai switch, OP CODE: %d\n", OP_CODE);
+   
 
     switch(OP_CODE) {
       case EMS_SETUP:
-        printf("entrou ems_setup\n");
         ems_setup(buffer, session);
         initialized_server = 1;
         break;
       
       case EMS_QUIT:
-        printf("entrou quit server\n");
         initialized_server = 0;
         if (unlink(session->req_pipe_path) != 0 && errno != ENOENT) {
           fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", session->req_pipe_path, strerror(errno));
           return 1;
         };
-        //ems_terminate();
         break;
       
       case EMS_CREATE:
@@ -122,8 +119,6 @@ int main(int argc, char* argv[]) {
         memcpy(&event_id, &buffer[1], sizeof(unsigned int));
         memcpy(&num_rows, &buffer[1 + sizeof(unsigned int)], sizeof(size_t));
         memcpy(&num_cols, &buffer[1 + sizeof(unsigned int) + sizeof(size_t)], sizeof(size_t));
-
-        // JÁ RECEBE OS DADOS BEM, FALTA CHAMAR O EMS_CREATE DO SERVER E RETORNAR VALOR PARA O CLIENTE
 
         // Chama ems_create() com os dados fornecidos
         int response_val = ems_create(event_id, num_rows, num_cols);
@@ -145,10 +140,10 @@ int main(int argc, char* argv[]) {
         printf("entrou reserve\n");
         // Obtém dados enviados pela request pipe
         size_t num_seats = 0;
-        size_t *xs = malloc(num_seats * sizeof(size_t));
-        size_t *ys = malloc(num_seats * sizeof(size_t));
         memcpy(&event_id, &buffer[1], sizeof(unsigned int));
         memcpy(&num_seats, &buffer[1 + sizeof(unsigned int)], sizeof(size_t));
+        size_t *xs = malloc(num_seats * sizeof(size_t));
+        size_t *ys = malloc(num_seats * sizeof(size_t));
         memcpy(xs, &buffer[1 + sizeof(unsigned int) + sizeof(size_t)], num_seats * sizeof(size_t));
         memcpy(ys, &buffer[1 + sizeof(unsigned int) + sizeof(size_t) + num_seats * sizeof(size_t)], num_seats * sizeof(size_t));
 
@@ -168,15 +163,78 @@ int main(int argc, char* argv[]) {
         break;
       
       case EMS_SHOW:
-        printf("entrou show\n");
         // Obtém dados enviados pela request pipe
         memcpy(&event_id, &buffer[1], sizeof(unsigned int));
+        char *ptr = NULL;
+
+        // Chama ems_show() e preenche buffer com resultado
+        response_val = ems_show(&ptr, event_id);
+
+        size_t rows, cols;
+        memcpy(&rows, ptr, sizeof(size_t));
+        memcpy(&cols, ptr + sizeof(size_t), sizeof(size_t));
+
+        char *message = malloc(sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
+        memcpy(message, &response_val, sizeof(int));
+        memcpy(message + sizeof(int), ptr, 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
+
+        for(size_t i = 0; i < rows*cols; i++) {
+          size_t a;
+          memcpy(&a, message + sizeof(int) + (sizeof(size_t)*(2+i)), sizeof(size_t));
+          printf("%u ", a);
+        }
+        
+        // Retorna valor ao cliente pela response pipe
+        resp_fd = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd == -1) {
+          fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+          return 1;
+        }
+        print_str_size(resp_fd, message, sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
+        close(resp_fd);
+        free(message);
 
         break;
       
       case EMS_LIST_EVENTS:
         printf("entrou list events\n");
-        // Chama ems_list_events()
+        // Chama ems_list_events() e preenche buffer com resultado
+        char *list = NULL;
+        //*message = NULL;
+
+        response_val = ems_list_events(&list);
+
+        size_t num_events;
+        memcpy(&num_events, list, sizeof(size_t));
+        int size = 0;
+
+        // Cria mensagem a ser passada ao cliente pela pipe
+        if (num_events == 0) {
+          // DÁ  ERRO
+          printf("eventos 0\n");
+          size = sizeof(int) + sizeof(size_t);
+          *message = malloc(sizeof(int) + sizeof(size_t)); // nesta linha
+          memcpy(message + sizeof(int), list, sizeof(size_t));
+        }
+        else {
+          size = sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int);
+          *message = malloc(sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int));
+          memcpy(message + sizeof(int), list, sizeof(size_t) + num_events * sizeof(unsigned int));
+        }
+        printf("passou if\n");
+        memcpy(message, &response_val, sizeof(int));
+        
+        // Retorna valor ao cliente pela response pipe
+        resp_fd = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd == -1) {
+          fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+          return 1;
+        }
+        print_str_size(resp_fd, message, size);
+        close(resp_fd);
+        free(list);
+        //free(message);
+        
         break;
       
       case EOC:

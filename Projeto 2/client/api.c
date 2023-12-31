@@ -67,7 +67,6 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
 }
 
 int ems_quit(void) {
-  printf("entrou ems_quit client\n");
   //TODO: send create request to the server (through the request pipe)
   char message[1];
   message[0] = '2';
@@ -124,7 +123,7 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
   char response[sizeof(int)];
   ssize_t bytesRead = read(resp_fd, response, sizeof(response));
   if (bytesRead == -1) {
-    fprintf(stderr, "[ERR]: read from responde pipe failed: %s\n", strerror(errno));
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
     close(resp_fd);
     return 1;
   }
@@ -132,7 +131,6 @@ int ems_create(unsigned int event_id, size_t num_rows, size_t num_cols) {
 
   int response_val;
   memcpy(&response_val, &response, sizeof(int));
-  printf("Response create: %d\n", response_val);
 
   return response_val;
 }
@@ -167,7 +165,7 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
   char response[sizeof(int)];
   ssize_t bytesRead = read(resp_fd, response, sizeof(response));
   if (bytesRead == -1) {
-    fprintf(stderr, "[ERR]: read from responde pipe failed: %s\n", strerror(errno));
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
     close(resp_fd);
     return 1;
   }
@@ -175,7 +173,6 @@ int ems_reserve(unsigned int event_id, size_t num_seats, size_t* xs, size_t* ys)
 
   int response_val;
   memcpy(&response_val, &response, sizeof(int));
-  printf("Response reserve: %d\n", response_val);
 
   return response_val;
 }
@@ -197,12 +194,126 @@ int ems_show(int out_fd, unsigned int event_id) {
   close(req_fd);
 
   // Open response pipe to receive
-  return 1;
+  int resp_fd = open(client->resp_pipe_path, O_RDONLY);
+  if (resp_fd == -1) {
+    fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+
+  // Read from pipe
+  char *response = malloc(sizeof(int) + 2 * sizeof(size_t));
+  ssize_t bytesRead = read(resp_fd, response, sizeof(int) + 2 * sizeof(size_t));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  //close(resp_fd);
+  int response_val;
+  size_t num_rows, num_cols;
+  memcpy(&response_val, response, sizeof(int));
+  memcpy(&num_rows, response + sizeof(int), sizeof(size_t));
+  memcpy(&num_cols, response + (sizeof(int) + sizeof(size_t)), sizeof(size_t));
+
+  free(response);
+  response = malloc(num_rows * num_cols * sizeof(size_t));
+
+  size_t data_index = 0;
+  bytesRead = read(resp_fd, response, (num_rows * num_cols) * sizeof(size_t));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  close(resp_fd);
+
+  // Write to output file
+  for (size_t i = 1; i <= num_rows; i++) {
+    for (size_t j = 1; j <= num_cols; j++) {
+      char buffer[16];
+      size_t a;
+      memcpy(&a, response + (sizeof(size_t) * ((i - 1) * num_cols + j - 1)), sizeof(size_t));
+      sprintf(buffer, "%u", a);
+
+      if (print_str(out_fd, buffer)) {
+        perror("Error writing to file descriptor");
+        return 1;
+      }
+
+      if (j < num_cols) {
+        if (print_str(out_fd, " ")) {
+          perror("Error writing to file descriptor");
+          return 1;
+        }
+      }
+
+    }
+    if (print_str(out_fd, "\n")) {
+      perror("Error writing to file descriptor");
+      return 1;
+    }
+
+  }
+  free(response);
+  return response_val;
 }
 
 int ems_list_events(int out_fd) {
   //TODO: send list request to the server (through the request pipe) and wait for the response (through the response pipe)
-  char message[1 + sizeof(unsigned int)];
+  char message[1];
   message[0] = '6';
-  return 1;
+
+  // Open request pipe to send
+  int req_fd = open(client->req_pipe_path, O_WRONLY);
+  if (req_fd == -1) {
+    fprintf(stderr, "[ERR]: open request pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+  print_str_size(req_fd, message, 1);
+  close(req_fd);
+
+  // Open response pipe to receive
+  int resp_fd = open(client->resp_pipe_path, O_RDONLY);
+  if (resp_fd == -1) {
+    fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+    return 1;
+  }
+
+  // Read from pipe
+  char *response = malloc(sizeof(int) + sizeof(size_t));
+  ssize_t bytesRead = read(resp_fd, response, sizeof(int) + sizeof(size_t));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  int response_val;
+  size_t num_events;
+  memcpy(&response_val, response, sizeof(int));
+  memcpy(&num_events, response + sizeof(int), sizeof(size_t));
+
+  printf("Response list: %d\n", response_val);
+  printf("Num_events: %lu\n", num_events);
+
+  free(response);
+  response = malloc(num_events * sizeof(unsigned int));
+
+  size_t data_index = 0;
+  bytesRead = read(resp_fd, response, num_events * sizeof(unsigned int));
+  if (bytesRead == -1) {
+    fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
+    close(resp_fd);
+    return 1;
+  }
+  close(resp_fd);
+
+  for (size_t i = 0; i < num_events; i++) {
+    size_t temp;
+    memcpy(&temp, response + i * sizeof(unsigned int), sizeof(unsigned int));
+    printf("id: %u\n", temp);
+  }
+
+  // Write to output file
+
+  return response_val;
 }
