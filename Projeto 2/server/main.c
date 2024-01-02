@@ -166,32 +166,40 @@ int main(int argc, char* argv[]) {
         // Obtém dados enviados pela request pipe
         memcpy(&event_id, &buffer[1], sizeof(unsigned int));
         char *ptr = NULL;
+        int response_val_show;
+        int resp_fd_show;
 
         // Chama ems_show() e preenche buffer com resultado
-        response_val = ems_show(&ptr, event_id);
+        if(response_val_show = ems_show(&ptr, event_id)) {
+          char erro[sizeof(int)];
+          memcpy(erro, &response_val_show, sizeof(int));
+
+          resp_fd_show = open(session->resp_pipe_path, O_WRONLY);
+          if (resp_fd_show == -1) {
+            fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            return 1;
+          }
+          print_str_size(resp_fd_show, erro, sizeof(int));
+          close(resp_fd_show);
+          break;
+        }
 
         size_t rows, cols;
         memcpy(&rows, ptr, sizeof(size_t));
         memcpy(&cols, ptr + sizeof(size_t), sizeof(size_t));
 
         char *message = malloc(sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
-        memcpy(message, &response_val, sizeof(int));
+        memcpy(message, &response_val_show, sizeof(int));
         memcpy(message + sizeof(int), ptr, 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
-
-        for(size_t i = 0; i < rows*cols; i++) {
-          size_t a;
-          memcpy(&a, message + sizeof(int) + (sizeof(size_t)*(2+i)), sizeof(size_t));
-          printf("%u ", a);
-        }
         
         // Retorna valor ao cliente pela response pipe
-        resp_fd = open(session->resp_pipe_path, O_WRONLY);
-        if (resp_fd == -1) {
+        resp_fd_show = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd_show == -1) {
           fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
           return 1;
         }
-        print_str_size(resp_fd, message, sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
-        close(resp_fd);
+        print_str_size(resp_fd_show, message, sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
+        close(resp_fd_show);
         free(message);
 
         break;
@@ -200,40 +208,52 @@ int main(int argc, char* argv[]) {
         printf("entrou list events\n");
         // Chama ems_list_events() e preenche buffer com resultado
         char *list = NULL;
+        char* message_list = NULL;
         //*message = NULL;
+        int response_val_list;
+        int resp_fd_list;
 
-        response_val = ems_list_events(&list);
+        if(response_val_list = ems_list_events(&list)) {
+          char erro[sizeof(int)];
+          memcpy(erro, &response_val_list, sizeof(int));
+
+          resp_fd_list = open(session->resp_pipe_path, O_WRONLY);
+          if (resp_fd_list == -1) {
+            fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            return 1;
+          }
+          print_str_size(resp_fd_list, erro, sizeof(int));
+          close(resp_fd_list);
+          break;
+        }
 
         size_t num_events;
         memcpy(&num_events, list, sizeof(size_t));
         int size = 0;
+        printf("num events: %lu\n", num_events);
 
         // Cria mensagem a ser passada ao cliente pela pipe
-        if (num_events == 0) {
+        size = sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int);
+        printf("fez malloc\n");
+        if (num_events != 0) {
+          message_list = malloc(sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int));
           // DÁ  ERRO
-          printf("eventos 0\n");
-          size = sizeof(int) + sizeof(size_t);
-          *message = malloc(sizeof(int) + sizeof(size_t)); // nesta linha
-          memcpy(message + sizeof(int), list, sizeof(size_t));
+          printf("passou malloc\n");
+          memcpy(message_list + sizeof(int), list, sizeof(size_t) + num_events * sizeof(unsigned int));
+          memcpy(message_list, &response_val_list, sizeof(int));
+          //memcpy(message + sizeof(int), &num_events, sizeof(size_t));
         }
-        else {
-          size = sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int);
-          *message = malloc(sizeof(int) + sizeof(size_t) + num_events * sizeof(unsigned int));
-          memcpy(message + sizeof(int), list, sizeof(size_t) + num_events * sizeof(unsigned int));
-        }
-        printf("passou if\n");
-        memcpy(message, &response_val, sizeof(int));
         
         // Retorna valor ao cliente pela response pipe
-        resp_fd = open(session->resp_pipe_path, O_WRONLY);
-        if (resp_fd == -1) {
+        resp_fd_list = open(session->resp_pipe_path, O_WRONLY);
+        if (resp_fd_list == -1) {
           fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
           return 1;
         }
-        print_str_size(resp_fd, message, size);
-        close(resp_fd);
+        print_str_size(resp_fd_list, message_list, size);
+        close(resp_fd_list);
         free(list);
-        //free(message);
+        free(message_list);
         
         break;
       

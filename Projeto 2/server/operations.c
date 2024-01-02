@@ -230,7 +230,8 @@ int ems_show(char **message, unsigned int event_id) {
 }
 
 int ems_list_events(char **message) {
-  printf("entrou operations\n");
+  printf("entrou list operations\n");
+
   if (event_list == NULL) {
     fprintf(stderr, "EMS state must be initialized\n");
     return 1;

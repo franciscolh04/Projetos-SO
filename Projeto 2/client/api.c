@@ -212,6 +212,11 @@ int ems_show(int out_fd, unsigned int event_id) {
   int response_val;
   size_t num_rows, num_cols;
   memcpy(&response_val, response, sizeof(int));
+  
+  if(response_val) {
+    free(response);
+    return response_val;
+  }
   memcpy(&num_rows, response + sizeof(int), sizeof(size_t));
   memcpy(&num_cols, response + (sizeof(int) + sizeof(size_t)), sizeof(size_t));
 
@@ -290,10 +295,11 @@ int ems_list_events(int out_fd) {
   int response_val;
   size_t num_events;
   memcpy(&response_val, response, sizeof(int));
+  if(response_val) {
+    free(response);
+    return response_val;
+  }
   memcpy(&num_events, response + sizeof(int), sizeof(size_t));
-
-  printf("Response list: %d\n", response_val);
-  printf("Num_events: %lu\n", num_events);
 
   free(response);
   response = malloc(num_events * sizeof(unsigned int));
@@ -307,13 +313,21 @@ int ems_list_events(int out_fd) {
   }
   close(resp_fd);
 
-  for (size_t i = 0; i < num_events; i++) {
-    size_t temp;
-    memcpy(&temp, response + i * sizeof(unsigned int), sizeof(unsigned int));
-    printf("id: %u\n", temp);
-  }
-
   // Write to output file
+  if (num_events == 0) {
+    print_str(out_fd, "No events\n");
+  }
+  else {
+    for(size_t i = 0; i < num_events; i++) {
+      print_str(out_fd, "Event ");
+      unsigned int temp;
+      memcpy(&temp, response + i * sizeof(unsigned int), sizeof(unsigned int));
+
+      char id[16];
+      sprintf(id, "%u\n", temp, sizeof(unsigned int));
+      print_str(out_fd, id);
+    }
+  }
 
   return response_val;
 }
