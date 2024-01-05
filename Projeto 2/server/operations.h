@@ -12,9 +12,24 @@
 #define EOC 7
 
 struct Session {
-    int session_id;
     char req_pipe_path[40];
     char resp_pipe_path[40];
+    struct Session *next;
+};
+
+struct Request {
+    char req_pipe_path[40];
+    char resp_pipe_path[40];
+};
+
+struct ThreadArgs {
+    pthread_mutex_t *mutex;  // mutex para a leitura e gravação
+    pthread_mutex_t *mutex_cond;  // mutex para condition variable
+     // mutex para as reservas
+    int id; // session id
+    struct Session session;
+    struct Session *head;
+    pthread_cond_t *cond_var;
 };
 
 /// Initializes the EMS state.
@@ -51,6 +66,8 @@ int ems_show(char **buffer, unsigned int event_id);
 /// @return 0 if the events were printed successfully, 1 otherwise.
 int ems_list_events(char **message);
 
-int ems_setup(char buffer[82], struct Session *session);
+int ems_setup(int id, struct Session *session);
+
+void* execute_commands(void *args);
 
 #endif  // SERVER_OPERATIONS_H

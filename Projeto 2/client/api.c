@@ -48,10 +48,10 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
     return 1;
   }
 
-  char session_id_str[2000];
+  char response_setup[sizeof(int)];
 
   // Ler o session_id do response pipe
-  ssize_t bytesRead = read(resp_fd, session_id_str, sizeof(session_id_str));
+  ssize_t bytesRead = read(resp_fd, response_setup, sizeof(int));
   if (bytesRead == -1) {
     fprintf(stderr, "[ERR]: read from response pipe failed: %s\n", strerror(errno));
     close(resp_fd);
@@ -61,7 +61,9 @@ int ems_setup(char const* req_pipe_path, char const* resp_pipe_path, char const*
   close(resp_fd);
 
   // Associar session id ao named pipe do server
-  client->session_id = atoi(session_id_str);
+  int session_id;
+  memcpy(&session_id, response_setup, sizeof(int));
+  client->session_id = session_id;
 
   return 0;
 }

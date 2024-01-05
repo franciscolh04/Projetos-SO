@@ -14,7 +14,7 @@ endif
 
 all: server/ems client/client
 
-server/ems: common/io.o server/main.o server/operations.o server/eventlist.o
+server/ems: common/io.o server/main.o server/operations.o server/eventlist.o server/buffer_prod_cons.o
 	$(CC) $(CFLAGS) $(SLEEP) -o $@ $^
 
 client/client: common/io.o client/main.o client/api.o client/parser.o
