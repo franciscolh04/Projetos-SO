@@ -337,7 +337,7 @@ void* execute_commands(void *args) {
     //Variáveis de condição
     printf("cliente não inicializado\n");
     // Lê paths de pipes de request e response e conecta-se a eles
-
+    pthread_mutex_lock(mutex_cond);
     printf("passou mutex com id: %d\n", thread_id);
     while(head_null()) {
       printf("entrou no while\n");
@@ -348,7 +348,7 @@ void* execute_commands(void *args) {
       }
     }
     printf("passou variavel de condição\n");
-
+    pthread_mutex_unlock(mutex_cond);
     
     pthread_mutex_lock(mutex_t);
     removeFirstNode(session);
@@ -376,12 +376,10 @@ void* execute_commands(void *args) {
     printf("foi buscar a session\n");
     pthread_mutex_unlock(mutex_t);
 
-    pthread_mutex_lock(mutex_t);
     printf("Response pipe: %s\n", session->resp_pipe_path);
     printf("Request pipe: %s\n", session->req_pipe_path);
     ems_setup(thread_id, session);
     printf("passou set up\n");
-    pthread_mutex_unlock(mutex_t);
     
 
     OP_CODE = 0;
@@ -394,6 +392,7 @@ void* execute_commands(void *args) {
         if (req_fd == -1) {
           fprintf(stderr, "[ERR]: open request pipe failed: %s\n", strerror(errno));
           ems_terminate();
+
           return 1;
         }
         //TODO: Read from pipe
@@ -437,6 +436,7 @@ void* execute_commands(void *args) {
           int resp_fd = open(session->resp_pipe_path, O_WRONLY);
           if (resp_fd == -1) {
             fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            pthread_mutex_unlock(mutex_t);
             return 1;
           }
           char response[sizeof(int)];
@@ -466,6 +466,7 @@ void* execute_commands(void *args) {
           resp_fd = open(session->resp_pipe_path, O_WRONLY);
           if (resp_fd == -1) {
             fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            pthread_mutex_unlock(mutex_t);
             return 1;
           }
           memcpy(&response, &response_val, sizeof(int));
@@ -492,6 +493,7 @@ void* execute_commands(void *args) {
             resp_fd_show = open(session->resp_pipe_path, O_WRONLY);
             if (resp_fd_show == -1) {
               fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+              pthread_mutex_unlock(mutex_t);
               return 1;
             }
             print_str_size(resp_fd_show, erro, sizeof(int));
@@ -512,6 +514,7 @@ void* execute_commands(void *args) {
           resp_fd_show = open(session->resp_pipe_path, O_WRONLY);
           if (resp_fd_show == -1) {
             fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            pthread_mutex_unlock(mutex_t);
             return 1;
           }
           print_str_size(resp_fd_show, message, sizeof(int) + 2 * sizeof(size_t) + (rows * cols) * sizeof(size_t));
@@ -535,6 +538,7 @@ void* execute_commands(void *args) {
             resp_fd_list = open(session->resp_pipe_path, O_WRONLY);
             if (resp_fd_list == -1) {
               fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+              pthread_mutex_unlock(mutex_t);
               return 1;
             }
             print_str_size(resp_fd_list, erro, sizeof(int));
@@ -560,6 +564,7 @@ void* execute_commands(void *args) {
           resp_fd_list = open(session->resp_pipe_path, O_WRONLY);
           if (resp_fd_list == -1) {
             fprintf(stderr, "[ERR]: open response pipe failed: %s\n", strerror(errno));
+            pthread_mutex_unlock(mutex_t);
             return 1;
           }
           print_str_size(resp_fd_list, message_list, size);
