@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
 
 #include "common/constants.h"
 #include "common/io.h"
@@ -15,6 +16,7 @@
 #include "buffer_prod_cons.h"
 
 int initialized_server = 0;
+int signal_flag = 0;
 
 int main(int argc, char* argv[]) {
   if (argc < 2 || argc > 3) {
@@ -40,9 +42,20 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  // Remove pipe if it already exists
+  if (unlink(argv[1]) != 0 && errno != ENOENT) {
+    fprintf(stderr, "[ERR]: unlink(%s) failed: %s\n", argv[1], strerror(errno));
+    return 1;
+  }
+
   //TODO: Intialize server, create worker threads
   if (mkfifo(argv[1], 0640) != 0) {
     fprintf(stderr, "[ERR]: mkfifo failed: %s\n", strerror(errno));
+    return 1;
+  }
+
+  if (signal(SIGUSR1, sigusr1_signal_handler) == SIG_ERR) {
+    perror("Signal handler failed\n");
     return 1;
   }
 
@@ -53,82 +66,134 @@ int main(int argc, char* argv[]) {
     ems_terminate();
     return 1;
   }
-  int OP_CODE = 0;
-  struct Session *session = malloc(sizeof(struct Session));
-  char buffer[82]; // MAX SIZE OF 2 PATHS (verificar depois)
+
+  char buffer[MAX_SIZE_PATHS]; // MAX SIZE OF 2 PATHS
   ssize_t bytesRead;
 
   pthread_t threads[MAX_SESSION_COUNT];
   struct ThreadArgs threadArgs[MAX_SESSION_COUNT];
   pthread_mutex_t mutex;
-  struct Session *head = NULL;
-  struct Session *tail = NULL;
   pthread_cond_t cond_var; 
   pthread_mutex_t mutex_cond;
-  pthread_cond_init(&cond_var,NULL);
-  pthread_mutex_init(&mutex, NULL);
-  pthread_mutex_init(&mutex_cond, NULL);
+  pthread_rwlock_t buffer_lock;
+
+  if (pthread_cond_init(&cond_var,NULL) != 0) {
+    fprintf(stderr, "Error inicializing condition variable\n");
+    return 1;
+  }
+  if (pthread_mutex_init(&mutex, NULL) != 0) {
+    fprintf(stderr, "Error inicializing mutex\n");
+    return 1;
+  }
+  if(pthread_mutex_init(&mutex_cond, NULL) != 0) {
+    fprintf(stderr, "Error inicializing mutex condition\n");
+    return 1;
+  }
+  if(pthread_rwlock_init(&buffer_lock, NULL) != 0) {
+    fprintf(stderr, "Error inicializing read and write lock\n");
+    return 1;
+  }
 
   for (int i = 0; i < MAX_SESSION_COUNT; ++i) {
     threadArgs[i].mutex = &mutex;
     threadArgs[i].id = i + 1;
-    //threadArgs[i].head = &head;
     threadArgs[i].cond_var = &cond_var;
     threadArgs[i].mutex_cond = &mutex_cond;
+    threadArgs[i].buffer_lock = &buffer_lock;
 
-    // Criar thread
-    pthread_create(&threads[i], 0, execute_commands, (void *)&threadArgs[i]);
-    printf("criou thread %d\n", i + 1);
+    // Cria thread
+    if (pthread_create(&threads[i], 0, execute_commands, (void *)&threadArgs[i]) != 0) {
+      fprintf(stderr, "Error creating thread\n");
+      return 1;
+    }
   }
 
   while(1) {
-    bytesRead = read(server_fd, buffer, sizeof(buffer));
-    printf("Leu o terminal\n");
-    if (bytesRead == -1) {
-      fprintf(stderr, "[ERR]: read from server pipe failed: %s\n", strerror(errno));
-      close(server_fd);
-      ems_terminate();
+    if (signal_flag) {
+      // Chama função que mostra o estado de cada evento
+      signal_show();
+      signal_flag = 0;
+      if (signal(SIGUSR1, sigusr1_signal_handler) == SIG_ERR) {
+        perror("Signal handler failed\n");
+        exit(EXIT_FAILURE);
+      }
+    }
+
+    //bloquear o servidor se já não houver espaço na lista de espera (buffer)
+    if (pthread_mutex_lock(&mutex_cond) != 0) {
+      fprintf(stderr, "Error locking condition mutex\n");
       return 1;
     }
-    if(bytesRead > 0) {
-      addNode(buffer);
-      /*
-      struct Session *new_session;
-      new_session = malloc(sizeof(struct Session));
-      // obtem tail da lista ligada (buffer produtor-consumidor)
-      // malloc novo nó e cópia de informações para o nó
-      memcpy(new_session->req_pipe_path, &buffer[1], 40);
-      memcpy(new_session->resp_pipe_path, &buffer[41], 40);
-      new_session->next = NULL;
-      if(head == NULL) {
-        printf("criou head da lista\n");
-        head = new_session;
-        tail = new_session;
-        printf("adicionou cliente a buffer\n");
+    while(list_length() >= MAX_WAIT_LIST) {
+      if (pthread_cond_wait(&cond_var, &mutex_cond) != 0) {
+        fprintf(stderr, "Error waiting for condition\n");
+        pthread_mutex_unlock(&mutex_cond);
+        return 1;
       }
-      else {
-        printf("criou novo elemento da lista\n");
-        tail->next = new_session;
-        tail = new_session;
-      }
-      */
-      pthread_cond_signal(&cond_var);
-      printf("Sinalizou \n");
-
-      // adicionar nó ao final da lista ligada
     }
-    printf("Acabou de ler o terminal \n");
+    if (pthread_mutex_unlock(&mutex_cond) != 0) {
+      fprintf(stderr, "Error unlocking condition mutex\n");
+      return 1;
+    }
+
+    //ler da pipe do servidor 
+    bytesRead = read(server_fd, buffer, sizeof(buffer));
+ 
+    if (bytesRead == -1) {
+      // Trata erro EINTR
+      if(errno != EINTR) {
+        fprintf(stderr, "[ERR]: read from server pipe failed: %s\n", strerror(errno));
+        if (close(server_fd) == -1) {
+          fprintf(stderr, "[ERR]: close server pipe failed: %s\n", strerror(errno));
+          return 1;
+        }
+        ems_terminate();
+        return 1;
+      }
+      continue;
+    }
+    
+    //Sinalizar as threads que a lista já não está vazia
+    if(bytesRead > 0) {
+      if (pthread_rwlock_wrlock(&buffer_lock) != 0) {
+        fprintf(stderr, "Error locking buffer read and write lock\n");
+        return 1;
+      }
+      if (addNode(buffer)) {
+        fprintf(stderr, "Failed to add node\n");
+        return 1;
+      }
+      if (pthread_rwlock_unlock(&buffer_lock) != 0) {
+        fprintf(stderr, "Error unlocking buffer read and write lock\n");
+        return 1;
+      }
+      if (pthread_cond_signal(&cond_var) != 0) {
+        fprintf(stderr, "[ERR]: pthread_cond_signal failed\n");
+        return 1;
+      }
+    }
   }
-  
 
   for (int i = 0; i < MAX_SESSION_COUNT; ++i) {
     void *retorno;
-    if(pthread_join(threads[i], &retorno) == ((void*) 1)) {
+    if(pthread_join(threads[i], &retorno) == 1) {
       return 1;
     }
   }
-  pthread_mutex_destroy(&mutex);
-  pthread_cond_destroy(&cond_var);
+  
+  if (pthread_mutex_destroy(&mutex) != 0 ) {
+    fprintf(stderr, "Error destroying mutex\n");
+    return 1;
+  }
+  if( pthread_cond_destroy(&cond_var) != 0) {
+    fprintf(stderr, "Error destroying condition variable\n");
+    return 1;
+  }
+
+  if (pthread_rwlock_destroy(&buffer_lock) != 0) {
+    fprintf(stderr, "Error destroying read and write lock\n");
+    return 1;
+  }
 
   //TODO: Close Server
   if (close(server_fd) == -1) {
@@ -138,4 +203,8 @@ int main(int argc, char* argv[]) {
   }
 
   ems_terminate();
+}
+
+void sigusr1_signal_handler() {
+  signal_flag = 1;
 }

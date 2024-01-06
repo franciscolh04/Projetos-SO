@@ -116,8 +116,14 @@ int main(int argc, char* argv[]) {
         break;
 
       case EOC:
-        close(in_fd);
-        close(out_fd);
+        if (close(in_fd) == - 1) {
+          fprintf(stderr, "Error closing input fd\n");
+          return 1;
+        }
+        if(close(out_fd) == -1) {
+          fprintf(stderr, "Error closing output fd\n");
+          return 1;
+        }
         ems_quit();
         return 0;
     }

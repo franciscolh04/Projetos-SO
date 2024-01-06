@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stddef.h>
+
 
 int parse_uint(int fd, unsigned int *value, char *next) {
   char buf[16];
@@ -78,7 +80,7 @@ int print_str(int fd, const char *str) {
   return 0;
 }
 
-int print_str_size(int fd, const char *str, int size) {
+int print_str_size(int fd, const char *str, size_t size) {
   while (size > 0) {
     ssize_t written = write(fd, str, size);
     if (written == -1) {
@@ -86,7 +88,7 @@ int print_str_size(int fd, const char *str, int size) {
     }
 
     str += (size_t)written;
-    size -= (int)written;
+    size -= (size_t)written;
   }
 
   return 0;

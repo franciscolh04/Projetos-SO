@@ -3,12 +3,12 @@
 
 #include <stddef.h>
 
-//void addNode(char *buffer,struct Session **head, struct Session **tail);
+int addNode(char *buffer);
 
-void addNode(char *buffer);
-
-void removeFirstNode(struct Session *head);
+void removeFirstNode(struct Session *session);
 
 int head_null();
+
+int list_length();
 
 #endif  // BUFFER_H

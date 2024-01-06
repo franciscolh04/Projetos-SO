@@ -25,7 +25,7 @@ struct Request {
 struct ThreadArgs {
     pthread_mutex_t *mutex;  // mutex para a leitura e gravação
     pthread_mutex_t *mutex_cond;  // mutex para condition variable
-     // mutex para as reservas
+    pthread_rwlock_t *buffer_lock; // lock para escrita/leitura no buffer de pedido
     int id; // session id
     struct Session session;
     struct Session *head;
@@ -69,5 +69,15 @@ int ems_list_events(char **message);
 int ems_setup(int id, struct Session *session);
 
 void* execute_commands(void *args);
+
+void parse_create(char buffer[82], unsigned int *event_id, size_t *num_rows, size_t *num_cols);
+
+void parse_show(char *ptr, size_t *rows, size_t* cols, int *response_val_show, char *message);
+
+int parse_list(char **list, size_t *num_events, char **message_list, int *response_val_list);
+
+void sigusr1_signal_handler();
+
+int signal_show();
 
 #endif  // SERVER_OPERATIONS_H
